@@ -240,7 +240,7 @@ def test_space_list_sends_where_param() -> None:
     with Session(HOST, *CREDS) as s:
         s.list(Space, where="site_name='global'")
     assert route.called
-    assert route.calls[0].request.url.params["WHERE"] == "site_name='global'"
+    assert route.calls.last.request.url.params["WHERE"] == "site_name='global'"
 
 
 @respx.mock
@@ -250,7 +250,7 @@ def test_space_list_sends_limit_param() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Space, limit=5)
-    assert route.calls[0].request.url.params["limit"] == "5"
+    assert route.calls.last.request.url.params["limit"] == "5"
 
 
 def test_space_coerce_non_dict_passthrough() -> None:

@@ -503,7 +503,7 @@ def test_subnet_list_sends_where_param() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where="site_id='7'")
-    assert route.calls[0].request.url.params["WHERE"] == "site_id='7'"
+    assert route.calls.last.request.url.params["WHERE"] == "site_id='7'"
 
 
 @respx.mock
@@ -513,7 +513,7 @@ def test_subnet_list_sends_limit_and_orderby() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, limit=10, orderby="start_ip_addr ASC")
-    params = route.calls[0].request.url.params
+    params = route.calls.last.request.url.params
     assert params["limit"] == "10"
     assert params["ORDERBY"] == "start_ip_addr ASC"
 

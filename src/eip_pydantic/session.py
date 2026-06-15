@@ -116,6 +116,32 @@ class BaseSession:
             kwargs["no_parent_class_param"] = True
         return model_cls.build_class_request("list", **kwargs)
 
+    @staticmethod
+    def _build_count_params(
+        model_cls: type[SolidServerModel],
+        where: str | Condition | Iterable[Condition] | None,
+        tags: str | None,
+        no_parent_class_param: bool,
+    ) -> tuple[str, str, dict[str, str]]:
+        effective_where: str | Condition | None
+        if where is None or isinstance(where, (str, Condition)):
+            effective_where = where
+        else:
+            effective_where = and_all(where)
+
+        if isinstance(effective_where, Condition) and (auto_tags := effective_where.required_tags):
+            extra = "&".join(sorted(auto_tags))
+            tags = f"{extra}&{tags}" if tags else extra
+
+        kwargs: dict[str, Any] = {}
+        if effective_where is not None:
+            kwargs["where"] = str(effective_where)
+        if tags is not None:
+            kwargs["tags"] = tags
+        if no_parent_class_param:
+            kwargs["no_parent_class_param"] = True
+        return model_cls.build_class_request("count", **kwargs)
+
     def _absorb_list_result(self, cls: type[T], parsed: list[T]) -> list[T]:
         result: list[T] = []
         for obj in parsed:
@@ -301,6 +327,37 @@ class Session(BaseSession):
         self._put_cache(obj)
         return obj
 
+    def count(
+        self,
+        cls: type[T],
+        *,
+        where: str | Condition | Iterable[Condition] | None = None,
+        tags: str | None = None,
+        no_parent_class_param: bool = False,
+    ) -> int:
+        """Return the number of objects of ``cls`` matching the given filter.
+
+        Args:
+            cls: The model class to count (e.g. ``Space``, ``Subnet``).
+            where: Filter clause — a raw SQL-style string, a ``Condition``
+                built with ``cls.c.<field> == value``, or an iterable of
+                ``Condition`` objects that are AND-ed together.  Tagged
+                class-parameter conditions have their required TAGS injected
+                automatically.
+            tags: Explicit TAGS expression.  Auto-collected tags from ``where``
+                are merged in automatically.
+            no_parent_class_param: Exclude parent class parameters from output.
+
+        Returns:
+            Integer count of matching objects.
+
+        Raises:
+            TypeError: If ``cls`` has no ``_count_path`` configured.
+        """
+        verb, path, params = self._build_count_params(cls, where, tags, no_parent_class_param)
+        raw = self._dispatch(verb, path, params)
+        return cast(int, cls.parse_response("count", raw))
+
     # ---- RPC ----------------------------------------------------------------
 
     def find_free_subnet(
@@ -322,7 +379,7 @@ class Session(BaseSession):
         ordered by ``cost`` ascending (lowest = least fragmentation).
 
         Args:
-            prefix: CIDR prefix length (1–32) of the desired subnet.
+            prefix: CIDR prefix length (1 to 32) of the desired subnet.
             size: Number of IP addresses the desired subnet must contain.
             space: Restrict search to this space — an integer ID or a
                 :class:`Space` instance.
@@ -570,6 +627,37 @@ class AsyncSession(BaseSession):
         self._put_cache(obj)
         return obj
 
+    async def count(
+        self,
+        cls: type[T],
+        *,
+        where: str | Condition | Iterable[Condition] | None = None,
+        tags: str | None = None,
+        no_parent_class_param: bool = False,
+    ) -> int:
+        """Return the number of objects of ``cls`` matching the given filter.
+
+        Args:
+            cls: The model class to count (e.g. ``Space``, ``Subnet``).
+            where: Filter clause — a raw SQL-style string, a ``Condition``
+                built with ``cls.c.<field> == value``, or an iterable of
+                ``Condition`` objects that are AND-ed together.  Tagged
+                class-parameter conditions have their required TAGS injected
+                automatically.
+            tags: Explicit TAGS expression.  Auto-collected tags from ``where``
+                are merged in automatically.
+            no_parent_class_param: Exclude parent class parameters from output.
+
+        Returns:
+            Integer count of matching objects.
+
+        Raises:
+            TypeError: If ``cls`` has no ``_count_path`` configured.
+        """
+        verb, path, params = self._build_count_params(cls, where, tags, no_parent_class_param)
+        raw = await self._dispatch(verb, path, params)
+        return cast(int, cls.parse_response("count", raw))
+
     # ---- RPC ----------------------------------------------------------------
 
     async def find_free_subnet(
@@ -591,7 +679,7 @@ class AsyncSession(BaseSession):
         ordered by ``cost`` ascending (lowest = least fragmentation).
 
         Args:
-            prefix: CIDR prefix length (1–32) of the desired subnet.
+            prefix: CIDR prefix length (1 to 32) of the desired subnet.
             size: Number of IP addresses the desired subnet must contain.
             space: Restrict search to this space — an integer ID or a
                 :class:`Space` instance.

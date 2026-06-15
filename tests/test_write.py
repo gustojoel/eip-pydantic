@@ -384,8 +384,8 @@ def test_session_list_passes_where_and_limit() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where="site_id='7'", limit=5)
-    assert route.calls[0].request.url.params["WHERE"] == "site_id='7'"
-    assert route.calls[0].request.url.params["limit"] == "5"
+    assert route.calls.last.request.url.params["WHERE"] == "site_id='7'"
+    assert route.calls.last.request.url.params["limit"] == "5"
 
 
 @respx.mock
@@ -395,7 +395,7 @@ def test_session_list_where_list_of_conditions() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where=[Subnet.c.site_id == "7", Subnet.c.subnet_name == "test"])
-    assert route.calls[0].request.url.params["WHERE"] == "(site_id='7') and (subnet_name='test')"
+    assert route.calls.last.request.url.params["WHERE"] == "(site_id='7') and (subnet_name='test')"
 
 
 def test_and_all_single() -> None:
@@ -425,7 +425,7 @@ def test_session_list_auto_tracks_for_flush() -> None:
         spaces = s.list(Space)
         spaces[0].site_name = "renamed"
     assert route.called
-    assert route.calls[0].request.url.params["site_name"] == "renamed"
+    assert route.calls.last.request.url.params["site_name"] == "renamed"
 
 
 # ---------------------------------------------------------------------------
@@ -644,8 +644,8 @@ def test_session_flush_subnet_update_sends_put() -> None:
         s.add(sn)
         sn.subnet_name = "renamed"
     assert route.called
-    assert route.calls[0].request.url.params["subnet_name"] == "renamed"
-    assert route.calls[0].request.url.params["subnet_id"] == "1"
+    assert route.calls.last.request.url.params["subnet_name"] == "renamed"
+    assert route.calls.last.request.url.params["subnet_id"] == "1"
 
 
 @respx.mock
@@ -669,8 +669,8 @@ def test_session_flush_space_update_sends_put() -> None:
         s.add(sp)
         sp.site_name = "renamed"
     assert route.called
-    assert route.calls[0].request.url.params["site_name"] == "renamed"
-    assert route.calls[0].request.url.params["site_id"] == "7"
+    assert route.calls.last.request.url.params["site_name"] == "renamed"
+    assert route.calls.last.request.url.params["site_id"] == "7"
 
 
 @respx.mock
@@ -713,8 +713,8 @@ def test_session_flush_subnet_create_sends_post() -> None:
         s.new(sn)
         sn.subnet_name = "brand-new"
     assert route.called
-    assert route.calls[0].request.url.params["subnet_addr"] == "10.0.0.0"
-    assert route.calls[0].request.url.params["subnet_prefix"] == "24"
+    assert route.calls.last.request.url.params["subnet_addr"] == "10.0.0.0"
+    assert route.calls.last.request.url.params["subnet_prefix"] == "24"
 
 
 @respx.mock
@@ -755,7 +755,7 @@ def test_session_delete_sends_delete_request() -> None:
     with Session(HOST, *CREDS) as s:
         s.delete(sp)
     assert route.called
-    assert route.calls[0].request.url.params["site_id"] == "7"
+    assert route.calls.last.request.url.params["site_id"] == "7"
 
 
 @respx.mock
@@ -812,7 +812,7 @@ async def test_async_session_flush_update_sends_put() -> None:
         s.add(sn)
         sn.subnet_name = "renamed"
     assert route.called
-    assert route.calls[0].request.url.params["subnet_name"] == "renamed"
+    assert route.calls.last.request.url.params["subnet_name"] == "renamed"
 
 
 @respx.mock
@@ -837,7 +837,7 @@ async def test_async_session_delete() -> None:
     async with AsyncSession(HOST, *CREDS) as s:
         await s.delete(sp)
     assert route.called
-    assert route.calls[0].request.url.params["site_id"] == "7"
+    assert route.calls.last.request.url.params["site_id"] == "7"
 
 
 # ---------------------------------------------------------------------------
@@ -852,7 +852,7 @@ def test_session_list_select_offset_no_parent_class_param() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Space, select="site_id,site_name", offset=5, no_parent_class_param=True)
-    params = dict(route.calls[0].request.url.params)
+    params = dict(route.calls.last.request.url.params)
     assert params["SELECT"] == "site_id,site_name"
     assert params["offset"] == "5"
     assert params["NO_PARENT_CLASS_PARAM"] == "1"
@@ -864,9 +864,8 @@ def test_session_list_select_offset_no_parent_class_param() -> None:
 
 
 def test_session_dispatch_unknown_verb_raises() -> None:
-    with Session(HOST, *CREDS) as s:
-        with pytest.raises(ValueError, match="Unsupported"):
-            s._dispatch("PATCH", "rest/ip_site_list", {})
+    with Session(HOST, *CREDS) as s, pytest.raises(ValueError, match="Unsupported"):
+        s._dispatch("PATCH", "rest/ip_site_list", {})
 
 
 @respx.mock

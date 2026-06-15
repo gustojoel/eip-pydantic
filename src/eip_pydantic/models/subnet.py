@@ -1,15 +1,13 @@
 import math
 from datetime import datetime
 from ipaddress import IPv4Address
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 from pydantic import Field, model_validator
 
 from eip_pydantic.exceptions import InternalError
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
 
-if TYPE_CHECKING:
-    from eip_pydantic.models.space import Space
 
 
 class FreeSubnet(SolidServerModel):
@@ -30,7 +28,7 @@ class FreeSubnet(SolidServerModel):
     site_id: int | None = None
 
     @classmethod
-    def build_class_request(
+    def build_class_request(  # noqa: PLR0912
         cls,
         operation: str,
         **kwargs: Any,
@@ -39,7 +37,7 @@ class FreeSubnet(SolidServerModel):
 
         Args:
             operation: Must be ``'find_free'``.
-            prefix: CIDR prefix length (1–32) of the desired subnet.
+            prefix: CIDR prefix length (1 to 32) of the desired subnet.
             size: Number of IP addresses the desired subnet must contain.
             space: Space to search in — an integer ID or a :class:`Space` instance.
             subnet: Parent block to restrict the search — an integer ID or a
@@ -153,6 +151,7 @@ class Subnet(SolidServerModel):
     _pk_field: ClassVar[str] = "subnet_id"
     _list_path: ClassVar[str] = "rest/ip_block_subnet_list"
     _info_path: ClassVar[str] = "rest/ip_block_subnet_info"
+    _count_path: ClassVar[str] = "rest/ip_block_subnet_count"
     _add_path: ClassVar[str] = "rest/ip_subnet_add"
     _delete_path: ClassVar[str] = "rest/ip_block_subnet_delete"
 

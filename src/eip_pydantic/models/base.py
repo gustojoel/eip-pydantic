@@ -67,6 +67,7 @@ class SolidServerModel(BaseModel):
     _pk_field: ClassVar[str] = ""
     _list_path: ClassVar[str] = ""
     _info_path: ClassVar[str] = ""
+    _count_path: ClassVar[str] = ""
     _add_path: ClassVar[str] = ""
     _delete_path: ClassVar[str] = ""
 
@@ -222,7 +223,7 @@ class SolidServerModel(BaseModel):
     # ---- HTTP request / response dispatch -----------------------------------
 
     @classmethod
-    def build_class_request(
+    def build_class_request(  # noqa: PLR0912
         cls,
         operation: str,
         **kwargs: Any,
@@ -266,6 +267,17 @@ class SolidServerModel(BaseModel):
                 if not cls._info_path:
                     raise TypeError(f"No fetch support for {cls.__name__}")
                 return ("GET", cls._info_path, {cls._pk_field: str(kwargs["id"])})
+            case "count":
+                if not cls._count_path:
+                    raise TypeError(f"No count support for {cls.__name__}")
+                params = {}
+                if (v := kwargs.get("where")) is not None:
+                    params["WHERE"] = str(v)
+                if (v := kwargs.get("tags")) is not None:
+                    params["TAGS"] = str(v)
+                if kwargs.get("no_parent_class_param"):
+                    params["NO_PARENT_CLASS_PARAM"] = "1"
+                return ("GET", cls._count_path, params)
             case _:
                 raise ValueError(f"Unknown class operation: {operation!r}")
 
@@ -334,6 +346,8 @@ class SolidServerModel(BaseModel):
             case "info":
                 first = cast(Any, data[0] if isinstance(data, list) else data)
                 return cls.model_validate(first)
+            case "count":
+                return int(data[0]["total"])
             case _:
                 raise ValueError(f"Unknown parse operation: {operation!r}")
 

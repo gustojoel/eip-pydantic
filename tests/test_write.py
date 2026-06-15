@@ -13,6 +13,8 @@ from eip_pydantic.models.base import RowEnabled, SolidServerModel
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
 
+
+
 BASE = "https://solidserver.example.com/"
 HOST = "solidserver.example.com"
 CREDS = ("admin", "secret")
@@ -185,7 +187,7 @@ def test_id_filter_no_id_raises() -> None:
         pass
 
     with pytest.raises(ValueError, match="no id"):
-        Bare().id_filter
+        _ = Bare().id_filter
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +368,7 @@ def test_build_request_delete_subnet() -> None:
 @respx.mock
 def test_session_list_returns_objects() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         spaces = s.list(Space)
@@ -378,7 +380,7 @@ def test_session_list_returns_objects() -> None:
 @respx.mock
 def test_session_list_passes_where_and_limit() -> None:
     route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where="site_id='7'", limit=5)
@@ -389,7 +391,7 @@ def test_session_list_passes_where_and_limit() -> None:
 @respx.mock
 def test_session_list_where_list_of_conditions() -> None:
     route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where=[Subnet.c.site_id == "7", Subnet.c.subnet_name == "test"])
@@ -414,10 +416,10 @@ def test_and_all_empty_raises() -> None:
 @respx.mock
 def test_session_list_auto_tracks_for_flush() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     route = respx.put(f"{BASE}rest/ip_site_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     with Session(HOST, *CREDS) as s:
         spaces = s.list(Space)
@@ -434,7 +436,7 @@ def test_session_list_auto_tracks_for_flush() -> None:
 @respx.mock
 def test_session_one_returns_single_object() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         sp = s.one(Space)
@@ -445,28 +447,26 @@ def test_session_one_returns_single_object() -> None:
 @respx.mock
 def test_session_one_raises_on_empty() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[])
+        return_value=httpx.Response(200, json=[]),
     )
-    with Session(HOST, *CREDS) as s:
-        with pytest.raises(ValueError, match="expected exactly 1 Space, got 0"):
-            s.one(Space)
+    with Session(HOST, *CREDS) as s, pytest.raises(ValueError, match="expected exactly 1 Space, got 0"):
+        s.one(Space)
 
 
 @respx.mock
 def test_session_one_raises_on_multiple() -> None:
     second = {**_SPACE_ROW, "site_id": "8", "site_name": "other"}
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW, second])
+        return_value=httpx.Response(200, json=[_SPACE_ROW, second]),
     )
-    with Session(HOST, *CREDS) as s:
-        with pytest.raises(ValueError, match="expected exactly 1 Space, got 2"):
-            s.one(Space)
+    with Session(HOST, *CREDS) as s, pytest.raises(ValueError, match="expected exactly 1 Space, got 2"):
+        s.one(Space)
 
 
 @respx.mock
 def test_session_one_or_none_returns_single_object() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         sp = s.one_or_none(Space)
@@ -477,7 +477,7 @@ def test_session_one_or_none_returns_single_object() -> None:
 @respx.mock
 def test_session_one_or_none_returns_none_on_empty() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[])
+        return_value=httpx.Response(200, json=[]),
     )
     with Session(HOST, *CREDS) as s:
         assert s.one_or_none(Space) is None
@@ -487,17 +487,16 @@ def test_session_one_or_none_returns_none_on_empty() -> None:
 def test_session_one_or_none_raises_on_multiple() -> None:
     second = {**_SPACE_ROW, "site_id": "8", "site_name": "other"}
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW, second])
+        return_value=httpx.Response(200, json=[_SPACE_ROW, second]),
     )
-    with Session(HOST, *CREDS) as s:
-        with pytest.raises(ValueError, match="expected at most 1 Space, got 2"):
-            s.one_or_none(Space)
+    with Session(HOST, *CREDS) as s, pytest.raises(ValueError, match="expected at most 1 Space, got 2"):
+        s.one_or_none(Space)
 
 
 @respx.mock
 async def test_async_session_one_returns_single_object() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     async with AsyncSession(HOST, *CREDS) as s:
         sp = await s.one(Space)
@@ -507,7 +506,7 @@ async def test_async_session_one_returns_single_object() -> None:
 @respx.mock
 async def test_async_session_one_or_none_returns_none_on_empty() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[])
+        return_value=httpx.Response(200, json=[]),
     )
     async with AsyncSession(HOST, *CREDS) as s:
         assert await s.one_or_none(Space) is None
@@ -521,7 +520,7 @@ async def test_async_session_one_or_none_returns_none_on_empty() -> None:
 @respx.mock
 def test_session_get_returns_correct_object() -> None:
     respx.get(f"{BASE}rest/ip_site_info").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         sp = s.get(Space, 7)
@@ -532,7 +531,7 @@ def test_session_get_returns_correct_object() -> None:
 @respx.mock
 def test_session_get_fetches_at_most_once() -> None:
     route = respx.get(f"{BASE}rest/ip_site_info").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         sp1 = s.get(Space, 7)
@@ -563,19 +562,18 @@ def test_session_get_unknown_type_raises() -> None:
     class Unknown(SolidServerModel):
         pass
 
-    with Session(HOST, *CREDS) as s:
-        with pytest.raises(TypeError, match="No fetch support"):
-            s.get(Unknown, 1)
+    with Session(HOST, *CREDS) as s, pytest.raises(TypeError, match="No fetch support"):
+        s.get(Unknown, 1)
 
 
 @respx.mock
 def test_session_list_returns_cached_instance_on_overlap() -> None:
     """If an object from list() is already in the cache, the cached instance is returned."""
     respx.get(f"{BASE}rest/ip_site_info").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         sp_from_get = s.get(Space, 7)
@@ -587,13 +585,13 @@ def test_session_list_returns_cached_instance_on_overlap() -> None:
 def test_session_list_preserves_dirty_state_on_overlap() -> None:
     """A dirty cached object is not overwritten when the same PK appears in list()."""
     respx.get(f"{BASE}rest/ip_site_info").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     respx.put(f"{BASE}rest/ip_site_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     with Session(HOST, *CREDS) as s:
         sp = s.get(Space, 7)
@@ -607,7 +605,7 @@ def test_session_list_preserves_dirty_state_on_overlap() -> None:
 def test_session_list_does_not_double_track() -> None:
     """Listing the same objects twice does not add them to _tracked twice."""
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Space)
@@ -618,10 +616,10 @@ def test_session_list_does_not_double_track() -> None:
 @respx.mock
 def test_session_list_then_get_uses_cache() -> None:
     route = respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     info_route = respx.get(f"{BASE}rest/ip_site_info").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         spaces = s.list(Space)
@@ -639,7 +637,7 @@ def test_session_list_then_get_uses_cache() -> None:
 @respx.mock
 def test_session_flush_subnet_update_sends_put() -> None:
     route = respx.put(f"{BASE}rest/ip_subnet_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sn = Subnet.model_validate(_SUBNET_ROW)
     with Session(HOST, *CREDS) as s:
@@ -653,7 +651,7 @@ def test_session_flush_subnet_update_sends_put() -> None:
 @respx.mock
 def test_session_flush_skips_clean_object() -> None:
     route = respx.put(f"{BASE}rest/ip_subnet_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sn = Subnet.model_validate(_SUBNET_ROW)
     with Session(HOST, *CREDS) as s:
@@ -664,7 +662,7 @@ def test_session_flush_skips_clean_object() -> None:
 @respx.mock
 def test_session_flush_space_update_sends_put() -> None:
     route = respx.put(f"{BASE}rest/ip_site_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sp = Space.model_validate(_SPACE_ROW)
     with Session(HOST, *CREDS) as s:
@@ -678,7 +676,7 @@ def test_session_flush_space_update_sends_put() -> None:
 @respx.mock
 def test_session_flush_marks_object_clean_after_update() -> None:
     respx.put(f"{BASE}rest/ip_subnet_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sn = Subnet.model_validate(_SUBNET_ROW)
     with Session(HOST, *CREDS) as s:
@@ -690,14 +688,13 @@ def test_session_flush_marks_object_clean_after_update() -> None:
 @respx.mock
 def test_session_flush_no_flush_on_exception() -> None:
     route = respx.put(f"{BASE}rest/ip_subnet_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sn = Subnet.model_validate(_SUBNET_ROW)
-    with pytest.raises(RuntimeError):
-        with Session(HOST, *CREDS) as s:
-            s.add(sn)
-            sn.subnet_name = "renamed"
-            raise RuntimeError("abort")
+    with pytest.raises(RuntimeError), Session(HOST, *CREDS) as s:  # noqa: PT012
+        s.add(sn)
+        sn.subnet_name = "renamed"
+        raise RuntimeError("abort")
     assert not route.called
 
 
@@ -709,7 +706,7 @@ def test_session_flush_no_flush_on_exception() -> None:
 @respx.mock
 def test_session_flush_subnet_create_sends_post() -> None:
     route = respx.post(f"{BASE}rest/ip_subnet_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sn = Subnet.model_validate({**_SUBNET_ROW, "subnet_id": "0"})
     with Session(HOST, *CREDS) as s:
@@ -723,7 +720,7 @@ def test_session_flush_subnet_create_sends_post() -> None:
 @respx.mock
 def test_session_flush_subnet_create_assigns_pk() -> None:
     respx.post(f"{BASE}rest/ip_subnet_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sn = Subnet.model_validate({**_SUBNET_ROW, "subnet_id": "0"})
     with Session(HOST, *CREDS) as s:
@@ -734,7 +731,7 @@ def test_session_flush_subnet_create_assigns_pk() -> None:
 @respx.mock
 def test_session_flush_space_create_sends_post() -> None:
     route = respx.post(f"{BASE}rest/ip_site_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sp = Space.model_validate({**_SPACE_ROW, "site_id": "0"})
     with Session(HOST, *CREDS) as s:
@@ -752,7 +749,7 @@ def test_session_flush_space_create_sends_post() -> None:
 @respx.mock
 def test_session_delete_sends_delete_request() -> None:
     route = respx.delete(f"{BASE}rest/ip_site_delete").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sp = Space.model_validate(_SPACE_ROW)
     with Session(HOST, *CREDS) as s:
@@ -768,7 +765,7 @@ def test_session_delete_removes_from_cache() -> None:
         httpx.Response(200, json=[_SPACE_ROW]),
     ])
     respx.delete(f"{BASE}rest/ip_site_delete").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     with Session(HOST, *CREDS) as s:
         sp = s.get(Space, 7)        # call 1 — API hit
@@ -785,7 +782,7 @@ def test_session_delete_removes_from_cache() -> None:
 @respx.mock
 async def test_async_session_list_returns_objects() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     async with AsyncSession(HOST, *CREDS) as s:
         spaces = await s.list(Space)
@@ -796,7 +793,7 @@ async def test_async_session_list_returns_objects() -> None:
 @respx.mock
 async def test_async_session_get_fetches_once() -> None:
     route = respx.get(f"{BASE}rest/ip_site_info").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     async with AsyncSession(HOST, *CREDS) as s:
         sp1 = await s.get(Space, 7)
@@ -808,7 +805,7 @@ async def test_async_session_get_fetches_once() -> None:
 @respx.mock
 async def test_async_session_flush_update_sends_put() -> None:
     route = respx.put(f"{BASE}rest/ip_subnet_add").mock(
-        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     sn = Subnet.model_validate(_SUBNET_ROW)
     async with AsyncSession(HOST, *CREDS) as s:
@@ -816,3 +813,95 @@ async def test_async_session_flush_update_sends_put() -> None:
         sn.subnet_name = "renamed"
     assert route.called
     assert route.calls[0].request.url.params["subnet_name"] == "renamed"
+
+
+@respx.mock
+async def test_async_session_flush_create_sends_post() -> None:
+    route = respx.post(f"{BASE}rest/ip_site_add").mock(
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
+    )
+    sp = Space.model_validate({**_SPACE_ROW, "site_id": "0"})
+    async with AsyncSession(HOST, *CREDS) as s:
+        s.new(sp)
+        sp.site_name = "brand-new"
+    assert route.called
+    assert sp.site_id == 42
+
+
+@respx.mock
+async def test_async_session_delete() -> None:
+    route = respx.delete(f"{BASE}rest/ip_site_delete").mock(
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
+    )
+    sp = Space.model_validate(_SPACE_ROW)
+    async with AsyncSession(HOST, *CREDS) as s:
+        await s.delete(sp)
+    assert route.called
+    assert route.calls[0].request.url.params["site_id"] == "7"
+
+
+# ---------------------------------------------------------------------------
+# Session.list — select / offset / no_parent_class_param
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_session_list_select_offset_no_parent_class_param() -> None:
+    route = respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
+    )
+    with Session(HOST, *CREDS) as s:
+        s.list(Space, select="site_id,site_name", offset=5, no_parent_class_param=True)
+    params = dict(route.calls[0].request.url.params)
+    assert params["SELECT"] == "site_id,site_name"
+    assert params["offset"] == "5"
+    assert params["NO_PARENT_CLASS_PARAM"] == "1"
+
+
+# ---------------------------------------------------------------------------
+# Session / AsyncSession — unknown HTTP verb
+# ---------------------------------------------------------------------------
+
+
+def test_session_dispatch_unknown_verb_raises() -> None:
+    with Session(HOST, *CREDS) as s:
+        with pytest.raises(ValueError, match="Unsupported"):
+            s._dispatch("PATCH", "rest/ip_site_list", {})
+
+
+@respx.mock
+async def test_async_session_dispatch_unknown_verb_raises() -> None:
+    async with AsyncSession(HOST, *CREDS) as s:
+        with pytest.raises(ValueError, match="Unsupported"):
+            await s._dispatch("PATCH", "rest/ip_site_list", {})
+
+
+# ---------------------------------------------------------------------------
+# build_class_request / build_request / parse_response / apply_response
+# ---------------------------------------------------------------------------
+
+
+def test_build_class_request_no_parent_class_param() -> None:
+    _, _, params = Space.build_class_request("list", no_parent_class_param=True)
+    assert params["NO_PARENT_CLASS_PARAM"] == "1"
+
+
+def test_build_request_info_success() -> None:
+    sp = Space.model_validate(_SPACE_ROW)
+    verb, path, params = sp.build_request("info")
+    assert verb == "GET"
+    assert path == "rest/ip_site_info"
+    assert params == {"site_id": "7"}
+
+
+def test_apply_response_update_clears_dirty() -> None:
+    sp = Space.model_validate(_SPACE_ROW)
+    sp.site_name = "changed"
+    assert sp.is_dirty
+    sp.apply_response("update", {})
+    assert not sp.is_dirty
+
+
+def test_apply_response_delete_noop() -> None:
+    sp = Space.model_validate(_SPACE_ROW)
+    sp.apply_response("delete", {})

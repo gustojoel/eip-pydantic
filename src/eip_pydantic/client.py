@@ -8,6 +8,7 @@ import httpx
 from eip_pydantic.exceptions import ApiError, AuthenticationError, NotFoundError
 
 
+
 _DEFAULT_TIMEOUT = httpx.Timeout(30.0)
 
 
@@ -30,7 +31,6 @@ class _BaseEipClient:
         username: str,
         password: str,
         *,
-        tls: bool,
         timeout: httpx.Timeout,
         verify: bool | str,
     ) -> dict[str, Any]:
@@ -57,7 +57,6 @@ class EipClient(_BaseEipClient):
         username: str,
         password: str,
         *,
-        tls: bool = True,
         timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
         verify: bool | str = True,
     ) -> None:
@@ -67,12 +66,11 @@ class EipClient(_BaseEipClient):
             host: SolidServer hostname or IP address (no scheme, no trailing slash).
             username: API username for HTTP Basic Auth.
             password: API password for HTTP Basic Auth.
-            tls: Use HTTPS.  Must be ``True``; the API rejects plain HTTP.
             timeout: httpx timeout configuration applied to every request.
             verify: TLS certificate verification.  Pass ``False`` to skip
                 verification or a path string to a custom CA bundle.
         """
-        self._http = httpx.Client(**self._httpx_kwargs(host, username, password, tls=tls, timeout=timeout, verify=verify))
+        self._http = httpx.Client(**self._httpx_kwargs(host, username, password, timeout=timeout, verify=verify))
 
     def __enter__(self) -> Self:
         return self
@@ -183,7 +181,6 @@ class AsyncEipClient(_BaseEipClient):
         username: str,
         password: str,
         *,
-        tls: bool = True,
         timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
         verify: bool | str = True,
     ) -> None:
@@ -193,12 +190,11 @@ class AsyncEipClient(_BaseEipClient):
             host: SolidServer hostname or IP address (no scheme, no trailing slash).
             username: API username for HTTP Basic Auth.
             password: API password for HTTP Basic Auth.
-            tls: Use HTTPS.  Must be ``True``; the API rejects plain HTTP.
             timeout: httpx timeout configuration applied to every request.
             verify: TLS certificate verification.  Pass ``False`` to skip
                 verification or a path string to a custom CA bundle.
         """
-        self._http = httpx.AsyncClient(**self._httpx_kwargs(host, username, password, tls=tls, timeout=timeout, verify=verify))
+        self._http = httpx.AsyncClient(**self._httpx_kwargs(host, username, password, timeout=timeout, verify=verify))
 
     async def __aenter__(self) -> Self:
         return self

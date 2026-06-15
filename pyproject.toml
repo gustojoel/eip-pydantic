@@ -12,15 +12,18 @@ packages = [{ include = "eip_pydantic", from = "src" }]
 python = "^3.11"
 httpx = "^0.27"
 pydantic = "^2.7"
-pyright = "^1.1.410"
 
 [tool.poetry.group.dev.dependencies]
+pyright = "^1.1.410"
 mypy = "^1.10"
 pytest = "^8"
 pytest-asyncio = "^0.23"
 respx = "^0.21"
 python-dotenv = "^1.2.2"
 ipython = "^9.14.1"
+pytest-cov = "^7.1.0"
+ruff = "^0.15.17"
+pdoc = "^16.0.0"
 
 [tool.mypy]
 strict = true
@@ -30,6 +33,7 @@ mypy_path = "src"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--cov --cov-report=term-missing --cov-report=lcov:lcov.info"
 
 [tool.autopep8]
 ignore = ['E303']
@@ -39,3 +43,67 @@ max-line-length = 120
 profile = "hug"
 line_length = 120
 lines_after_imports = 3
+
+[tool.ruff]
+line-length = 160
+target-version = "py311"
+
+[tool.ruff.format]
+
+[tool.ruff.lint]
+#select = ["F", "E", "W", "I", "N", "D"]
+select = ["ALL", "W191", "E111", "E114", "E117"]
+ignore = [
+    # already-ignored
+    "Q000", "D200", "D212", "D400", "D401", "D415", "TRY003", "EM101",
+    "PLR2004", "ANN401", "S101", "FBT", "RUF100", "PLR0913",
+    # docstring style
+    "D100",   # module docstrings not required everywhere
+    "D104",   # package __init__ docstrings not required
+    "D105",   # magic methods are self-documenting
+    "D107",   # __init__ docstrings not required
+    "D204",   # blank line after class docstring — minor nit
+    "D205",   # blank line between summary and description — style preference
+    "D213",   # conflicts with D212 (multi-line summary on second line)
+    "D413",   # blank line after last docstring section — minor nit
+    "D417",   # missing param descriptions — partial docstrings are fine
+    # exception style
+    "EM102",  # f-strings in exceptions — same rationale as EM101
+    # intentional name choices
+    "A002",   # `id` shadows builtin — intentional (user-requested rename)
+    # false positives / preview noise
+    "TC006",  # runtime-cast-value — false positive on cast(list[T], ...) pattern
+    # style preferences we disagree with
+    "TRY300", # try/else — current code is clearer
+    "C901",   # complexity — _build_list_params is fine as-is
+    "SIM108", # ternary — if/else is clearer for multi-branch logic
+]
+preview = true
+explicit-preview-rules = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "SLF001",   # tests legitimately access private state (_dirty, _tracked)
+    "D103",     # test functions don't need docstrings
+    "S104",     # IPv4Address("0.0.0.0") is a parsing assertion, not socket binding
+    "PLC0415",  # imports inside test helpers/fixtures are intentional
+]
+"scripts/*.py" = [
+    "T201",    # print is intentional in scripts
+    "E402",    # imports after sys.path setup are necessary
+    "INP001",  # scripts don't need __init__.py
+    "PLC0415", # imports after setup code are necessary
+    "D103",    # script helpers don't need docstrings
+]
+"scripts/ipy.py" = [
+    "F401",    # Space/Subnet/Session imports are intentional IPython namespace population
+]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 3
+
+[tool.ruff.lint.flake8-annotations]
+mypy-init-return = true
+
+[tool.ruff.lint.pydocstyle]
+ignore-decorators = ["typing.override"]

@@ -1,5 +1,5 @@
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import IntEnum
 from ipaddress import IPv4Address
 from typing import Any, ClassVar, cast
@@ -9,12 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from eip_pydantic.expressions import ColumnCollection, ColumnExpr, Condition
 
 
+
 class _CDescriptor:
     """Non-data descriptor returning a ``ColumnCollection`` bound to the accessing class."""
 
     def __get__(self, obj: object, objtype: "type[SolidServerModel] | None" = None) -> ColumnCollection:
         if objtype is None:
-            raise AttributeError("c must be accessed on the class, not an instance")
+            raise AttributeError("c must be accessed on the class, not an instance")  # pragma: no cover
         return ColumnCollection(objtype)
 
 
@@ -271,7 +272,7 @@ class SolidServerModel(BaseModel):
     def build_request(
         self,
         operation: str,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ARG002
     ) -> tuple[str, str, dict[str, str]]:
         """Build an HTTP request descriptor for an instance-level operation.
 
@@ -377,13 +378,13 @@ class SolidServerModel(BaseModel):
     @staticmethod
     def _as_str(v: object) -> str | None:
         """'' and '#' (null sentinel) → None."""
-        if v is None or v == "" or v == "#":
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
             return None
         return str(v)
 
     @staticmethod
     def _as_int(v: object) -> int | None:
-        if v is None or v == "" or v == "#":
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
             return None
         try:
             return int(str(v))
@@ -393,7 +394,7 @@ class SolidServerModel(BaseModel):
     @staticmethod
     def _as_nz_int(v: object) -> int | None:
         """Like _as_int but treats '0' as None (foreign-key null sentinel)."""
-        if v is None or v == "" or v == "#":
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
             return None
         try:
             n = int(str(v))
@@ -403,7 +404,7 @@ class SolidServerModel(BaseModel):
 
     @staticmethod
     def _as_float(v: object) -> float | None:
-        if v is None or v == "" or v == "#":
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
             return None
         try:
             return float(str(v))
@@ -423,7 +424,7 @@ class SolidServerModel(BaseModel):
     @staticmethod
     def _as_hex_ipv4(v: object) -> IPv4Address | None:
         """Hex-encoded string → IPv4Address ('0a541400' → 10.84.20.0)."""
-        if v is None or v == "" or v == "#":
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
             return None
         if isinstance(v, IPv4Address):
             return v
@@ -435,7 +436,7 @@ class SolidServerModel(BaseModel):
     @staticmethod
     def _as_dotted_ipv4(v: object) -> IPv4Address | None:
         """Dotted-decimal string → IPv4Address ('10.84.20.0' → 10.84.20.0)."""
-        if v is None or v == "" or v == "#":
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
             return None
         if isinstance(v, IPv4Address):
             return v
@@ -447,10 +448,10 @@ class SolidServerModel(BaseModel):
     @staticmethod
     def _as_datetime(v: object) -> datetime | None:
         """Unix epoch string → UTC datetime."""
-        if v is None or v == "" or v == "#":
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
             return None
         try:
-            return datetime.fromtimestamp(int(str(v)), tz=timezone.utc)
+            return datetime.fromtimestamp(int(str(v)), tz=UTC)
         except (ValueError, OSError, TypeError):
             return None
 

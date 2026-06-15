@@ -5,9 +5,12 @@ import pytest
 import respx
 
 from eip_pydantic import Session
-from eip_pydantic.expressions import ColumnExpr, Condition, OrderByExpr
+from eip_pydantic.expressions import ColumnCollection, OrderByExpr
+from eip_pydantic.models.base import SolidServerModel
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
+
+
 
 BASE = "https://solidserver.example.com/"
 HOST = "solidserver.example.com"
@@ -155,7 +158,7 @@ def test_tagged_in_() -> None:
 @respx.mock
 def test_session_list_auto_injects_tags_from_where() -> None:
     route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where=Subnet.c.foobar == "baz")
@@ -167,7 +170,7 @@ def test_session_list_auto_injects_tags_from_where() -> None:
 @respx.mock
 def test_session_list_auto_injects_tags_from_orderby() -> None:
     route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, orderby=Subnet.c.priority.asc())
@@ -179,7 +182,7 @@ def test_session_list_auto_injects_tags_from_orderby() -> None:
 @respx.mock
 def test_session_list_merges_auto_and_explicit_tags() -> None:
     route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where=Subnet.c.foobar == "baz", tags="network.other")
@@ -191,7 +194,7 @@ def test_session_list_merges_auto_and_explicit_tags() -> None:
 @respx.mock
 def test_session_list_real_field_no_tags_injected() -> None:
     route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where=Subnet.c.subnet_name == "foo")
@@ -203,7 +206,7 @@ def test_session_list_real_field_no_tags_injected() -> None:
 @respx.mock
 def test_session_list_condition_where_with_str_orderby() -> None:
     route = respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_SPACE_ROW])
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Space, where=Space.c.site_name == "global", orderby="site_name ASC")
@@ -235,3 +238,25 @@ def test_condition_repr() -> None:
 def test_orderby_repr() -> None:
     expr = Subnet.c.subnet_name.asc()
     assert repr(expr) == "OrderByExpr('subnet_name ASC')"
+
+
+# ---------------------------------------------------------------------------
+# ColumnCollection
+# ---------------------------------------------------------------------------
+
+def test_column_collection_dir_returns_field_names() -> None:
+    names = dir(Subnet.c)
+    assert "subnet_id" in names
+    assert "subnet_name" in names
+
+
+def test_column_collection_private_attr_raises() -> None:
+    with pytest.raises(AttributeError):
+        _ = getattr(Subnet.c, "_private")
+
+
+def test_column_collection_no_prefix_unknown_field() -> None:
+    col = ColumnCollection(SolidServerModel)
+    cond = col.any_field == "x"
+    assert str(cond) == "any_field='x'"
+    assert cond.required_tags == frozenset()

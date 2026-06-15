@@ -6,6 +6,7 @@ from pydantic import Field, model_validator
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
 
 
+
 class Space(SolidServerModel):
     """An EfficientIP IPAM space (``ip_site_list`` / ``ip_site_info``).
 

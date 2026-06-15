@@ -1,5 +1,6 @@
 """Sync and async unit-of-work sessions."""
 
+import contextlib
 from collections.abc import Iterable
 from types import TracebackType
 from typing import Any, Self, TypeVar, cast
@@ -9,6 +10,8 @@ import httpx
 from eip_pydantic.client import AsyncEipClient, EipClient
 from eip_pydantic.expressions import Condition, OrderByExpr, and_all
 from eip_pydantic.models.base import SolidServerModel
+
+
 
 T = TypeVar("T", bound=SolidServerModel)
 
@@ -215,7 +218,7 @@ class Session(BaseSession):
             Validated model instances in the order returned by the API.
         """
         verb, path, params = self._build_list_params(
-            cls, where, orderby, select, offset, limit, tags, no_parent_class_param
+            cls, where, orderby, select, offset, limit, tags, no_parent_class_param,
         )
         raw = self._dispatch(verb, path, params)
         return self._absorb_list_result(cls, cast(list[T], cls.parse_response("list", raw)))
@@ -309,10 +312,8 @@ class Session(BaseSession):
         self._dispatch(verb, path, params)
         if (obj_id := obj.id) is not None:
             self._cache.pop((type(obj), obj_id), None)
-        try:
+        with contextlib.suppress(ValueError):
             self._tracked.remove(obj)
-        except ValueError:
-            pass
 
     def flush(self) -> None:
         """Create or update all tracked objects that are new or dirty.
@@ -440,7 +441,7 @@ class AsyncSession(BaseSession):
             Validated model instances in the order returned by the API.
         """
         verb, path, params = self._build_list_params(
-            cls, where, orderby, select, offset, limit, tags, no_parent_class_param
+            cls, where, orderby, select, offset, limit, tags, no_parent_class_param,
         )
         raw = await self._dispatch(verb, path, params)
         return self._absorb_list_result(cls, cast(list[T], cls.parse_response("list", raw)))
@@ -526,10 +527,8 @@ class AsyncSession(BaseSession):
         await self._dispatch(verb, path, params)
         if (obj_id := obj.id) is not None:
             self._cache.pop((type(obj), obj_id), None)
-        try:
+        with contextlib.suppress(ValueError):
             self._tracked.remove(obj)
-        except ValueError:
-            pass
 
     async def flush(self) -> None:
         """Create or update all tracked objects that are new or dirty."""

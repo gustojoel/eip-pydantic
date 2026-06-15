@@ -7,7 +7,8 @@ import pytest
 import respx
 from pydantic import ValidationError
 
-from eip_pydantic import AsyncSession, Session
+from eip_pydantic import AsyncSession, Session, and_all
+from eip_pydantic.expressions import Condition
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
@@ -143,30 +144,48 @@ def test_mutable_space_name_does_not_raise() -> None:
 
 
 # ---------------------------------------------------------------------------
-# pk property and assign_pk
+# id property, assign_id, and id_filter
 # ---------------------------------------------------------------------------
 
 
-def test_subnet_pk() -> None:
+def test_subnet_id() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
-    assert sn.pk == 1
+    assert sn.id == 1
 
 
-def test_space_pk() -> None:
+def test_space_id() -> None:
     sp = Space.model_validate(_SPACE_ROW)
-    assert sp.pk == 7
+    assert sp.id == 7
 
 
-def test_assign_pk_bypasses_frozen() -> None:
+def test_assign_id_bypasses_frozen() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
-    sn.assign_pk(99)
+    sn.assign_id(99)
     assert sn.subnet_id == 99
 
 
-def test_assign_pk_does_not_dirty() -> None:
+def test_assign_id_does_not_dirty() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
-    sn.assign_pk(99)
+    sn.assign_id(99)
     assert not sn.is_dirty
+
+
+def test_id_filter_subnet() -> None:
+    sn = Subnet.model_validate(_SUBNET_ROW)
+    assert str(sn.id_filter) == "subnet_id='1'"
+
+
+def test_id_filter_space() -> None:
+    sp = Space.model_validate(_SPACE_ROW)
+    assert str(sp.id_filter) == "site_id='7'"
+
+
+def test_id_filter_no_id_raises() -> None:
+    class Bare(SolidServerModel):
+        pass
+
+    with pytest.raises(ValueError, match="no id"):
+        Bare().id_filter
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +301,7 @@ def test_build_class_request_list_with_where_and_limit() -> None:
 
 
 def test_build_class_request_info_space() -> None:
-    verb, path, params = Space.build_class_request("info", pk=7)
+    verb, path, params = Space.build_class_request("info", id=7)
     assert verb == "GET"
     assert path == "rest/ip_site_info"
     assert params == {"site_id": "7"}
@@ -293,7 +312,7 @@ def test_build_class_request_info_unknown_raises() -> None:
         pass
 
     with pytest.raises(TypeError, match="No fetch support"):
-        Unknown.build_class_request("info", pk=1)
+        Unknown.build_class_request("info", id=1)
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +387,31 @@ def test_session_list_passes_where_and_limit() -> None:
 
 
 @respx.mock
+def test_session_list_where_list_of_conditions() -> None:
+    route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
+        return_value=httpx.Response(200, json=[_SUBNET_ROW])
+    )
+    with Session(HOST, *CREDS) as s:
+        s.list(Subnet, where=[Subnet.c.site_id == "7", Subnet.c.subnet_name == "test"])
+    assert route.calls[0].request.url.params["WHERE"] == "(site_id='7') and (subnet_name='test')"
+
+
+def test_and_all_single() -> None:
+    c = Condition("x='1'")
+    assert str(and_all([c])) == "x='1'"
+
+
+def test_and_all_multiple() -> None:
+    result = and_all([Condition("a='1'"), Condition("b='2'"), Condition("c='3'")])
+    assert str(result) == "((a='1') and (b='2')) and (c='3')"
+
+
+def test_and_all_empty_raises() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        and_all([])
+
+
+@respx.mock
 def test_session_list_auto_tracks_for_flush() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
         return_value=httpx.Response(200, json=[_SPACE_ROW])
@@ -380,6 +424,93 @@ def test_session_list_auto_tracks_for_flush() -> None:
         spaces[0].site_name = "renamed"
     assert route.called
     assert route.calls[0].request.url.params["site_name"] == "renamed"
+
+
+# ---------------------------------------------------------------------------
+# Session.one / Session.one_or_none
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+def test_session_one_returns_single_object() -> None:
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW])
+    )
+    with Session(HOST, *CREDS) as s:
+        sp = s.one(Space)
+    assert isinstance(sp, Space)
+    assert sp.site_id == 7
+
+
+@respx.mock
+def test_session_one_raises_on_empty() -> None:
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    with Session(HOST, *CREDS) as s:
+        with pytest.raises(ValueError, match="expected exactly 1 Space, got 0"):
+            s.one(Space)
+
+
+@respx.mock
+def test_session_one_raises_on_multiple() -> None:
+    second = {**_SPACE_ROW, "site_id": "8", "site_name": "other"}
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW, second])
+    )
+    with Session(HOST, *CREDS) as s:
+        with pytest.raises(ValueError, match="expected exactly 1 Space, got 2"):
+            s.one(Space)
+
+
+@respx.mock
+def test_session_one_or_none_returns_single_object() -> None:
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW])
+    )
+    with Session(HOST, *CREDS) as s:
+        sp = s.one_or_none(Space)
+    assert sp is not None
+    assert sp.site_id == 7
+
+
+@respx.mock
+def test_session_one_or_none_returns_none_on_empty() -> None:
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    with Session(HOST, *CREDS) as s:
+        assert s.one_or_none(Space) is None
+
+
+@respx.mock
+def test_session_one_or_none_raises_on_multiple() -> None:
+    second = {**_SPACE_ROW, "site_id": "8", "site_name": "other"}
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW, second])
+    )
+    with Session(HOST, *CREDS) as s:
+        with pytest.raises(ValueError, match="expected at most 1 Space, got 2"):
+            s.one_or_none(Space)
+
+
+@respx.mock
+async def test_async_session_one_returns_single_object() -> None:
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW])
+    )
+    async with AsyncSession(HOST, *CREDS) as s:
+        sp = await s.one(Space)
+    assert sp.site_id == 7
+
+
+@respx.mock
+async def test_async_session_one_or_none_returns_none_on_empty() -> None:
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    async with AsyncSession(HOST, *CREDS) as s:
+        assert await s.one_or_none(Space) is None
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +566,53 @@ def test_session_get_unknown_type_raises() -> None:
     with Session(HOST, *CREDS) as s:
         with pytest.raises(TypeError, match="No fetch support"):
             s.get(Unknown, 1)
+
+
+@respx.mock
+def test_session_list_returns_cached_instance_on_overlap() -> None:
+    """If an object from list() is already in the cache, the cached instance is returned."""
+    respx.get(f"{BASE}rest/ip_site_info").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW])
+    )
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW])
+    )
+    with Session(HOST, *CREDS) as s:
+        sp_from_get = s.get(Space, 7)
+        spaces = s.list(Space)
+    assert spaces[0] is sp_from_get
+
+
+@respx.mock
+def test_session_list_preserves_dirty_state_on_overlap() -> None:
+    """A dirty cached object is not overwritten when the same PK appears in list()."""
+    respx.get(f"{BASE}rest/ip_site_info").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW])
+    )
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW])
+    )
+    respx.put(f"{BASE}rest/ip_site_add").mock(
+        return_value=httpx.Response(200, json=_ADD_RESPONSE)
+    )
+    with Session(HOST, *CREDS) as s:
+        sp = s.get(Space, 7)
+        sp.site_name = "mutated"
+        spaces = s.list(Space)
+        assert spaces[0] is sp
+        assert spaces[0].site_name == "mutated"
+
+
+@respx.mock
+def test_session_list_does_not_double_track() -> None:
+    """Listing the same objects twice does not add them to _tracked twice."""
+    respx.get(f"{BASE}rest/ip_site_list").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW])
+    )
+    with Session(HOST, *CREDS) as s:
+        s.list(Space)
+        s.list(Space)
+        assert s._tracked.count(s._tracked[0]) == 1
 
 
 @respx.mock

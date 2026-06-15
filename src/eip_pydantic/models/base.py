@@ -6,7 +6,7 @@ from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from eip_pydantic.expressions import ColumnCollection
+from eip_pydantic.expressions import ColumnCollection, ColumnExpr, Condition
 
 
 class _CDescriptor:
@@ -42,7 +42,7 @@ class SolidServerModel(BaseModel):
     * **Frozen enforcement** — read-only fields declare ``Field(frozen=True)``; any
       attempt to overwrite them raises ``pydantic.ValidationError``.
     * **Primary-key management** — each subclass sets ``_pk_field`` to the name of
-      its PK field.  ``pk`` reads it uniformly; ``assign_pk()`` bypasses the frozen
+      its PK field.  ``id`` reads it uniformly; ``assign_id()`` bypasses the frozen
       guard for server-assigned IDs after a POST.
     * **New-object lifecycle** — ``mark_new()`` flags an object as pending creation;
       ``finalize_creation()`` sets the server-assigned PK, clears the flag, and
@@ -93,7 +93,7 @@ class SolidServerModel(BaseModel):
     # ---- Primary-key helpers -------------------------------------------------
 
     @property
-    def pk(self) -> int | None:
+    def id(self) -> int | None:
         """The primary-key value for this object, or ``None`` for unsaved objects.
 
         The concrete field name (e.g. ``subnet_id`` or ``site_id``) is declared by
@@ -103,7 +103,7 @@ class SolidServerModel(BaseModel):
             return None
         return getattr(self, self._pk_field, None)
 
-    def assign_pk(self, value: int) -> None:
+    def assign_id(self, value: int) -> None:
         """Set the primary-key field, bypassing the frozen constraint.
 
         This is called by the API layer after a successful POST to record the
@@ -114,6 +114,26 @@ class SolidServerModel(BaseModel):
             value: The server-assigned primary-key integer.
         """
         object.__setattr__(self, self._pk_field, value)
+
+    @property
+    def id_filter(self) -> Condition:
+        """A Condition that identifies this object by its PK field.
+
+        Useful for filtering hierarchically subordinate objects::
+
+            s.list(Subnet, where=space.id_filter)
+            # → WHERE=site_id='7'
+
+            s.list(Subnet, where=[space.id_filter, Subnet.c.subnet_name.like('%prod%')])
+            # → WHERE=(site_id='7') and (subnet_name like '%prod%')
+
+        Raises:
+            ValueError: If this object has no primary key set.
+        """
+        if (obj_id := self.id) is None:
+            raise ValueError(f"{type(self).__name__} has no id set")
+        col: ColumnExpr = ColumnCollection(type(self)).__getattr__(self._pk_field)
+        return col == obj_id
 
     # ---- New-object lifecycle ------------------------------------------------
 
@@ -141,7 +161,7 @@ class SolidServerModel(BaseModel):
         Args:
             pk: The server-assigned primary-key integer from ``ret_oid``.
         """
-        self.assign_pk(pk)
+        self.assign_id(pk)
         self._is_new = False
         self.mark_clean()
 
@@ -244,7 +264,7 @@ class SolidServerModel(BaseModel):
             case "info":
                 if not cls._info_path:
                     raise TypeError(f"No fetch support for {cls.__name__}")
-                return ("GET", cls._info_path, {cls._pk_field: str(kwargs["pk"])})
+                return ("GET", cls._info_path, {cls._pk_field: str(kwargs["id"])})
             case _:
                 raise ValueError(f"Unknown class operation: {operation!r}")
 
@@ -273,21 +293,21 @@ class SolidServerModel(BaseModel):
         cls = type(self)
         match operation:
             case "info":
-                if (pk := self.pk) is None:
-                    raise ValueError(f"Cannot fetch {cls.__name__}: no primary key")
-                return ("GET", cls._info_path, {cls._pk_field: str(pk)})
+                if (obj_id := self.id) is None:
+                    raise ValueError(f"Cannot fetch {cls.__name__}: no id")
+                return ("GET", cls._info_path, {cls._pk_field: str(obj_id)})
             case "create":
                 return ("POST", cls._add_path, self.write_params())
             case "update":
-                if (pk := self.pk) is None:
-                    raise ValueError(f"Cannot update {cls.__name__}: no primary key")
+                if (obj_id := self.id) is None:
+                    raise ValueError(f"Cannot update {cls.__name__}: no id")
                 params = self.write_params()
-                params[cls._pk_field] = str(pk)
+                params[cls._pk_field] = str(obj_id)
                 return ("PUT", cls._add_path, params)
             case "delete":
-                if (pk := self.pk) is None:
-                    raise ValueError(f"Cannot delete {cls.__name__}: no primary key")
-                return ("DELETE", cls._delete_path, {cls._pk_field: str(pk)})
+                if (obj_id := self.id) is None:
+                    raise ValueError(f"Cannot delete {cls.__name__}: no id")
+                return ("DELETE", cls._delete_path, {cls._pk_field: str(obj_id)})
             case _:
                 raise ValueError(f"Unknown instance operation: {operation!r}")
 

@@ -1,12 +1,13 @@
 """Sync and async unit-of-work sessions."""
 
+from collections.abc import Iterable
 from types import TracebackType
 from typing import Any, Self, TypeVar, cast
 
 import httpx
 
 from eip_pydantic.client import AsyncEipClient, EipClient
-from eip_pydantic.expressions import Condition, OrderByExpr
+from eip_pydantic.expressions import Condition, OrderByExpr, and_all
 from eip_pydantic.models.base import SolidServerModel
 
 T = TypeVar("T", bound=SolidServerModel)
@@ -58,12 +59,78 @@ class BaseSession:
         self._tracked.append(obj)
 
     def _put_cache(self, obj: SolidServerModel) -> None:
-        if (pk := obj.pk) is not None:
-            self._cache[(type(obj), pk)] = obj
+        if (obj_id := obj.id) is not None:
+            self._cache[(type(obj), obj_id)] = obj
 
     def _get_cache(self, cls: type[T], pk: int) -> T | None:
         result = self._cache.get((cls, pk))
         return cast(T, result) if result is not None else None
+
+    @staticmethod
+    def _build_list_params(
+        model_cls: type[SolidServerModel],
+        where: str | Condition | Iterable[Condition] | None,
+        orderby: str | OrderByExpr | None,
+        select: str | None,
+        offset: int | None,
+        limit: int | None,
+        tags: str | None,
+        no_parent_class_param: bool,
+    ) -> tuple[str, str, dict[str, str]]:
+        effective_where: str | Condition | None
+        if where is None or isinstance(where, (str, Condition)):
+            effective_where = where
+        else:
+            effective_where = and_all(where)
+
+        auto_tags: set[str] = set()
+        if isinstance(effective_where, Condition):
+            auto_tags.update(effective_where.required_tags)
+        if isinstance(orderby, OrderByExpr):
+            auto_tags.update(orderby.required_tags)
+        if auto_tags:
+            extra = "&".join(sorted(auto_tags))
+            tags = f"{extra}&{tags}" if tags else extra
+
+        kwargs: dict[str, Any] = {}
+        if effective_where is not None:
+            kwargs["where"] = str(effective_where)
+        if orderby is not None:
+            kwargs["orderby"] = str(orderby)
+        if select is not None:
+            kwargs["select"] = select
+        if offset is not None:
+            kwargs["offset"] = offset
+        if limit is not None:
+            kwargs["limit"] = limit
+        if tags is not None:
+            kwargs["tags"] = tags
+        if no_parent_class_param:
+            kwargs["no_parent_class_param"] = True
+        return model_cls.build_class_request("list", **kwargs)
+
+    def _absorb_list_result(self, cls: type[T], parsed: list[T]) -> list[T]:
+        result: list[T] = []
+        for obj in parsed:
+            if obj.id is not None and (cached := self._get_cache(cls, obj.id)) is not None:
+                result.append(cached)
+            else:
+                self._put_cache(obj)
+                self.add(obj)
+                result.append(obj)
+        return result
+
+    @staticmethod
+    def _check_one(result: list[T], model_cls: type[T]) -> T:
+        if len(result) != 1:
+            raise ValueError(f"expected exactly 1 {model_cls.__name__}, got {len(result)}")
+        return result[0]
+
+    @staticmethod
+    def _check_one_or_none(result: list[T], model_cls: type[T]) -> T | None:
+        if len(result) > 1:
+            raise ValueError(f"expected at most 1 {model_cls.__name__}, got {len(result)}")
+        return result[0] if result else None
 
 
 class Session(BaseSession):
@@ -114,7 +181,7 @@ class Session(BaseSession):
         self,
         cls: type[T],
         *,
-        where: str | Condition | None = None,
+        where: str | Condition | Iterable[Condition] | None = None,
         orderby: str | OrderByExpr | None = None,
         select: str | None = None,
         offset: int | None = None,
@@ -130,8 +197,9 @@ class Session(BaseSession):
 
         Args:
             cls: The model class to list (e.g. ``Space``, ``Subnet``).
-            where: Filter clause — a raw SQL-style string or a ``Condition``
-                built with ``cls.c.<field> == value``.
+            where: Filter clause — a raw SQL-style string, a ``Condition``
+                built with ``cls.c.<field> == value``, or an iterable of
+                ``Condition`` objects that are AND-ed together.
             orderby: Sort clause — a raw string or an ``OrderByExpr`` built
                 with ``cls.c.<field>.asc()`` / ``.desc()``.
             select: Comma-separated list of columns to return.
@@ -146,39 +214,61 @@ class Session(BaseSession):
         Returns:
             Validated model instances in the order returned by the API.
         """
-        auto_tags: set[str] = set()
-        if isinstance(where, Condition):
-            auto_tags.update(where.required_tags)
-        if isinstance(orderby, OrderByExpr):
-            auto_tags.update(orderby.required_tags)
-        if auto_tags:
-            extra = "&".join(sorted(auto_tags))
-            tags = f"{extra}&{tags}" if tags else extra
-
-        kwargs: dict[str, Any] = {}
-        if where is not None:
-            kwargs["where"] = str(where)
-        if orderby is not None:
-            kwargs["orderby"] = str(orderby)
-        if select is not None:
-            kwargs["select"] = select
-        if offset is not None:
-            kwargs["offset"] = offset
-        if limit is not None:
-            kwargs["limit"] = limit
-        if tags is not None:
-            kwargs["tags"] = tags
-        if no_parent_class_param:
-            kwargs["no_parent_class_param"] = True
-        verb, path, params = cls.build_class_request("list", **kwargs)
+        verb, path, params = self._build_list_params(
+            cls, where, orderby, select, offset, limit, tags, no_parent_class_param
+        )
         raw = self._dispatch(verb, path, params)
-        result = cast(list[T], cls.parse_response("list", raw))
-        for obj in result:
-            self._tracked.append(obj)
-            self._put_cache(obj)
-        return result
+        return self._absorb_list_result(cls, cast(list[T], cls.parse_response("list", raw)))
 
-    def get(self, cls: type[T], pk: int) -> T:
+    def one(
+        self,
+        cls: type[T],
+        *,
+        where: str | Condition | Iterable[Condition] | None = None,
+        orderby: str | OrderByExpr | None = None,
+        select: str | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        tags: str | None = None,
+        no_parent_class_param: bool = False,
+    ) -> T:
+        """Like ``list()``, but assert exactly one result and return it.
+
+        Raises:
+            ValueError: If the result set is not exactly one object.
+        """
+        return self._check_one(
+            self.list(cls, where=where, orderby=orderby, select=select,
+                      offset=offset, limit=limit, tags=tags,
+                      no_parent_class_param=no_parent_class_param),
+            cls,
+        )
+
+    def one_or_none(
+        self,
+        cls: type[T],
+        *,
+        where: str | Condition | Iterable[Condition] | None = None,
+        orderby: str | OrderByExpr | None = None,
+        select: str | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        tags: str | None = None,
+        no_parent_class_param: bool = False,
+    ) -> T | None:
+        """Like ``list()``, but return the single result or ``None`` if empty.
+
+        Raises:
+            ValueError: If the result set contains more than one object.
+        """
+        return self._check_one_or_none(
+            self.list(cls, where=where, orderby=orderby, select=select,
+                      offset=offset, limit=limit, tags=tags,
+                      no_parent_class_param=no_parent_class_param),
+            cls,
+        )
+
+    def get(self, cls: type[T], id: int) -> T:
         """Return the object for ``(cls, pk)``, fetching from the API at most once.
 
         Checks the identity cache first.  On a cache miss, calls the
@@ -196,9 +286,9 @@ class Session(BaseSession):
         Raises:
             TypeError: If ``cls`` has no ``_info_path`` configured.
         """
-        if (cached := self._get_cache(cls, pk)) is not None:
+        if (cached := self._get_cache(cls, id)) is not None:
             return cached
-        verb, path, params = cls.build_class_request("info", pk=pk)
+        verb, path, params = cls.build_class_request("info", id=id)
         raw = self._dispatch(verb, path, params)
         obj = cast(T, cls.parse_response("info", raw))
         self._put_cache(obj)
@@ -213,12 +303,12 @@ class Session(BaseSession):
         and removes it from the tracked list if present.
 
         Args:
-            obj: The model instance to delete.  Must have a non-``None`` PK.
+            obj: The model instance to delete.  Must have a non-``None`` id.
         """
         verb, path, params = obj.build_request("delete")
         self._dispatch(verb, path, params)
-        if (pk := obj.pk) is not None:
-            self._cache.pop((type(obj), pk), None)
+        if (obj_id := obj.id) is not None:
+            self._cache.pop((type(obj), obj_id), None)
         try:
             self._tracked.remove(obj)
         except ValueError:
@@ -322,7 +412,7 @@ class AsyncSession(BaseSession):
         self,
         cls: type[T],
         *,
-        where: str | Condition | None = None,
+        where: str | Condition | Iterable[Condition] | None = None,
         orderby: str | OrderByExpr | None = None,
         select: str | None = None,
         offset: int | None = None,
@@ -334,8 +424,9 @@ class AsyncSession(BaseSession):
 
         Args:
             cls: The model class to list (e.g. ``Space``, ``Subnet``).
-            where: Filter clause — a raw SQL-style string or a ``Condition``
-                built with ``cls.c.<field> == value``.
+            where: Filter clause — a raw SQL-style string, a ``Condition``
+                built with ``cls.c.<field> == value``, or an iterable of
+                ``Condition`` objects that are AND-ed together.
             orderby: Sort clause — a raw string or an ``OrderByExpr`` built
                 with ``cls.c.<field>.asc()`` / ``.desc()``.
             select: Comma-separated column list.
@@ -348,44 +439,66 @@ class AsyncSession(BaseSession):
         Returns:
             Validated model instances in the order returned by the API.
         """
-        auto_tags: set[str] = set()
-        if isinstance(where, Condition):
-            auto_tags.update(where.required_tags)
-        if isinstance(orderby, OrderByExpr):
-            auto_tags.update(orderby.required_tags)
-        if auto_tags:
-            extra = "&".join(sorted(auto_tags))
-            tags = f"{extra}&{tags}" if tags else extra
-
-        kwargs: dict[str, Any] = {}
-        if where is not None:
-            kwargs["where"] = str(where)
-        if orderby is not None:
-            kwargs["orderby"] = str(orderby)
-        if select is not None:
-            kwargs["select"] = select
-        if offset is not None:
-            kwargs["offset"] = offset
-        if limit is not None:
-            kwargs["limit"] = limit
-        if tags is not None:
-            kwargs["tags"] = tags
-        if no_parent_class_param:
-            kwargs["no_parent_class_param"] = True
-        verb, path, params = cls.build_class_request("list", **kwargs)
+        verb, path, params = self._build_list_params(
+            cls, where, orderby, select, offset, limit, tags, no_parent_class_param
+        )
         raw = await self._dispatch(verb, path, params)
-        result = cast(list[T], cls.parse_response("list", raw))
-        for obj in result:
-            self._tracked.append(obj)
-            self._put_cache(obj)
-        return result
+        return self._absorb_list_result(cls, cast(list[T], cls.parse_response("list", raw)))
 
-    async def get(self, cls: type[T], pk: int) -> T:
-        """Return the object for ``(cls, pk)``, fetching from the API at most once.
+    async def one(
+        self,
+        cls: type[T],
+        *,
+        where: str | Condition | Iterable[Condition] | None = None,
+        orderby: str | OrderByExpr | None = None,
+        select: str | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        tags: str | None = None,
+        no_parent_class_param: bool = False,
+    ) -> T:
+        """Like ``list()``, but assert exactly one result and return it.
+
+        Raises:
+            ValueError: If the result set is not exactly one object.
+        """
+        return self._check_one(
+            await self.list(cls, where=where, orderby=orderby, select=select,
+                            offset=offset, limit=limit, tags=tags,
+                            no_parent_class_param=no_parent_class_param),
+            cls,
+        )
+
+    async def one_or_none(
+        self,
+        cls: type[T],
+        *,
+        where: str | Condition | Iterable[Condition] | None = None,
+        orderby: str | OrderByExpr | None = None,
+        select: str | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        tags: str | None = None,
+        no_parent_class_param: bool = False,
+    ) -> T | None:
+        """Like ``list()``, but return the single result or ``None`` if empty.
+
+        Raises:
+            ValueError: If the result set contains more than one object.
+        """
+        return self._check_one_or_none(
+            await self.list(cls, where=where, orderby=orderby, select=select,
+                            offset=offset, limit=limit, tags=tags,
+                            no_parent_class_param=no_parent_class_param),
+            cls,
+        )
+
+    async def get(self, cls: type[T], id: int) -> T:
+        """Return the object for ``(cls, id)``, fetching from the API at most once.
 
         Args:
             cls: The model class to fetch.
-            pk: The primary-key integer.
+            id: The primary-key integer.
 
         Returns:
             The cached or freshly fetched instance of ``cls``.
@@ -393,9 +506,9 @@ class AsyncSession(BaseSession):
         Raises:
             TypeError: If ``cls`` has no ``_info_path`` configured.
         """
-        if (cached := self._get_cache(cls, pk)) is not None:
+        if (cached := self._get_cache(cls, id)) is not None:
             return cached
-        verb, path, params = cls.build_class_request("info", pk=pk)
+        verb, path, params = cls.build_class_request("info", id=id)
         raw = await self._dispatch(verb, path, params)
         obj = cast(T, cls.parse_response("info", raw))
         self._put_cache(obj)
@@ -411,8 +524,8 @@ class AsyncSession(BaseSession):
         """
         verb, path, params = obj.build_request("delete")
         await self._dispatch(verb, path, params)
-        if (pk := obj.pk) is not None:
-            self._cache.pop((type(obj), pk), None)
+        if (obj_id := obj.id) is not None:
+            self._cache.pop((type(obj), obj_id), None)
         try:
             self._tracked.remove(obj)
         except ValueError:

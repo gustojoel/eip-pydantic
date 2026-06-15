@@ -56,6 +56,22 @@ if TYPE_CHECKING:
     from eip_pydantic.models.base import SolidServerModel
 
 
+def and_all(conditions: Iterable["Condition"]) -> "Condition":
+    """AND an iterable of Conditions into a single Condition.
+
+    Raises:
+        ValueError: If ``conditions`` is empty.
+    """
+    it = iter(conditions)
+    try:
+        result = next(it)
+    except StopIteration:
+        raise ValueError("and_all requires at least one Condition") from None
+    for cond in it:
+        result = result & cond
+    return result
+
+
 def _quote(value: object) -> str:
     """Coerce a value to a single-quoted API string, escaping internal single quotes."""
     s = str(value) if value is not None else ""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 
+
 class SolidServerError(Exception):
     """Base exception for all eip-pydantic errors."""
 

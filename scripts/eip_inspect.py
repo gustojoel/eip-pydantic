@@ -1,8 +1,8 @@
 """Inspect live SolidServer API responses and validate parsed models.
 
-Loads credentials from .env. Prints raw JSON, parsed model fields, any
-model_extra keys (fields the API returns that our model doesn't declare yet),
-and class_parameters.
+Loads credentials from .env. Prints parsed model fields, any model_extra keys
+(fields the API returns that our model doesn't declare yet), and class_parameters.
+Also cross-checks list vs info key sets for each object type.
 
 Usage:
     # Subnets — first 3
@@ -29,9 +29,13 @@ import os
 import sys
 from pathlib import Path
 
+
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from dotenv import load_dotenv
+
+
 
 load_dotenv()
 
@@ -40,6 +44,8 @@ from eip_pydantic.models.base import SolidServerModel
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
 
+
+
 SEPARATOR = "─" * 72
 
 
@@ -47,11 +53,6 @@ def _print_section(title: str) -> None:
     print(f"\n{'━' * 72}")
     print(f"  {title}")
     print(f"{'━' * 72}")
-
-
-def _print_raw(label: str, data: object) -> None:
-    print(f"\n{label}:")
-    print(json.dumps(data, indent=2, default=str))
 
 
 def _print_model(m: SolidServerModel, *, label: str = "Parsed model") -> None:
@@ -115,113 +116,79 @@ def _space_where(query: str) -> tuple[str, str]:
     )
 
 
-def cmd_subnet(s: Session, args: argparse.Namespace) -> None:
-    subnets: list[Subnet]
+def _cross_check(a: SolidServerModel, b: SolidServerModel) -> None:
+    keys_a = set(a.model_dump(exclude_none=False)) | set(a.model_extra or {})
+    keys_b = set(b.model_dump(exclude_none=False)) | set(b.model_extra or {})
+    only_in_a = keys_a - keys_b
+    only_in_b = keys_b - keys_a
+    if only_in_a:
+        print(f"  Keys only in list response:  {sorted(only_in_a)}")
+    if only_in_b:
+        print(f"  Keys only in info response:  {sorted(only_in_b)}")
+    if not only_in_a and not only_in_b:
+        print("  ✓  Both responses contain exactly the same set of keys")
 
-    if args.query:
-        desc, where = _subnet_where(args.query)
 
-        _print_section(f"ip_block_subnet_list  WHERE {desc}  — raw JSON")
-        raw_list: object = s._client.get("rest/ip_block_subnet_list", WHERE=where)
-        _print_raw("raw response", raw_list)
+def cmd_subnet(host: str, username: str, password: str, verify: bool | str, args: argparse.Namespace) -> None:
+    subnets: list[Subnet] = []
 
-        subnets = s.list(Subnet, where=where)
-        _print_section(f"ip_block_subnet_list  WHERE {desc}  — parsed as Subnet")
-        if not subnets:
-            print("  (no results)")
-            return
-        for i, sn in enumerate(subnets):
-            print(f"\n{SEPARATOR}")
-            _print_model(sn, label=f"Subnet [{i}]  id={sn.subnet_id}  {sn.start_hostaddr}–{sn.end_hostaddr}")
+    with Session(host, username, password, verify=verify) as s:
+        if args.query:
+            desc, where = _subnet_where(args.query)
+            subnets = s.list(Subnet, where=where)
+            _print_section(f"ip_block_subnet_list  WHERE {desc}")
+            if not subnets:
+                print("  (no results)")
+                return
+        else:
+            subnets = s.list(Subnet, limit=args.limit)
+            _print_section(f"ip_block_subnet_list  (limit={args.limit})")
 
-    else:
-        _print_section(f"ip_block_subnet_list  (limit={args.limit})  — raw JSON")
-        raw_list = s._client.get("rest/ip_block_subnet_list", limit=args.limit)
-        _print_raw("raw response", raw_list)
-
-        subnets = s.list(Subnet, limit=args.limit)
-        _print_section("ip_block_subnet_list  — parsed as Subnet")
-        for i, sn in enumerate(subnets):
-            print(f"\n{SEPARATOR}")
-            _print_model(sn, label=f"Subnet [{i}]  id={sn.subnet_id}  {sn.start_hostaddr}–{sn.end_hostaddr}")
+    for i, sn in enumerate(subnets):
+        print(f"\n{SEPARATOR}")
+        _print_model(sn, label=f"Subnet [{i}]  id={sn.subnet_id}  {sn.start_hostaddr}–{sn.end_hostaddr}")  # noqa: RUF001
 
     if subnets:
         first_id = subnets[0].subnet_id
-        _print_section(f"ip_block_subnet_info  subnet_id={first_id}  — raw JSON")
-        raw_info: object = s._client.get("rest/ip_block_subnet_info", subnet_id=first_id)
-        _print_raw("raw response", raw_info)
-
-        _print_section(f"ip_block_subnet_info  subnet_id={first_id}  — parsed as Subnet")
-        # Parse directly (bypass session cache) so we get the real info response
-        info = Subnet.parse_response("info", raw_info)
+        _print_section(f"ip_block_subnet_info  subnet_id={first_id}")
+        with Session(host, username, password, verify=verify) as s2:
+            info = s2.get(Subnet, first_id)
         _print_model(info, label=f"Subnet info  id={info.subnet_id}")
 
         _print_section("Cross-check: keys in list[0] vs info")
-        list_keys = set(subnets[0].model_dump(exclude_none=False)) | set(subnets[0].model_extra or {})
-        info_keys = set(info.model_dump(exclude_none=False)) | set(info.model_extra or {})
-        only_in_list = list_keys - info_keys
-        only_in_info = info_keys - list_keys
-        if only_in_list:
-            print(f"  Keys only in list response:  {sorted(only_in_list)}")
-        if only_in_info:
-            print(f"  Keys only in info response:  {sorted(only_in_info)}")
-        if not only_in_list and not only_in_info:
-            print("  ✓  Both responses contain exactly the same set of keys")
+        _cross_check(subnets[0], info)
 
     _model_extra_summary(list(subnets), "Subnet")
 
 
-def cmd_space(s: Session, args: argparse.Namespace) -> None:
-    spaces: list[Space]
+def cmd_space(host: str, username: str, password: str, verify: bool | str, args: argparse.Namespace) -> None:
+    spaces: list[Space] = []
 
-    if args.query:
-        desc, where = _space_where(args.query)
+    with Session(host, username, password, verify=verify) as s:
+        if args.query:
+            desc, where = _space_where(args.query)
+            spaces = s.list(Space, where=where)
+            _print_section(f"ip_site_list  WHERE {desc}")
+            if not spaces:
+                print("  (no results)")
+                return
+        else:
+            spaces = s.list(Space, limit=args.limit)
+            _print_section(f"ip_site_list  (limit={args.limit})")
 
-        _print_section(f"ip_site_list  WHERE {desc}  — raw JSON")
-        raw_list: object = s._client.get("rest/ip_site_list", WHERE=where)
-        _print_raw("raw response", raw_list)
-
-        spaces = s.list(Space, where=where)
-        _print_section(f"ip_site_list  WHERE {desc}  — parsed as Space")
-        if not spaces:
-            print("  (no results)")
-            return
-        for i, sp in enumerate(spaces):
-            print(f"\n{SEPARATOR}")
-            _print_model(sp, label=f"Space [{i}]  id={sp.site_id}  {sp.site_name!r}")
-
-    else:
-        _print_section(f"ip_site_list  (limit={args.limit})  — raw JSON")
-        raw_list = s._client.get("rest/ip_site_list", limit=args.limit)
-        _print_raw("raw response", raw_list)
-
-        spaces = s.list(Space, limit=args.limit)
-        _print_section("ip_site_list  — parsed as Space")
-        for i, sp in enumerate(spaces):
-            print(f"\n{SEPARATOR}")
-            _print_model(sp, label=f"Space [{i}]  id={sp.site_id}  {sp.site_name!r}")
+    for i, sp in enumerate(spaces):
+        print(f"\n{SEPARATOR}")
+        _print_model(sp, label=f"Space [{i}]  id={sp.site_id}  {sp.site_name!r}")
 
     if spaces:
         first_id = spaces[0].site_id
-        _print_section(f"ip_site_info  site_id={first_id}  — raw JSON")
-        raw_info: object = s._client.get("rest/ip_site_info", site_id=first_id)
-        _print_raw("raw response", raw_info)
-
-        _print_section(f"ip_site_info  site_id={first_id}  — parsed as Space")
-        info = Space.parse_response("info", raw_info)
+        _print_section(f"ip_site_info  site_id={first_id}")
+        with Session(host, username, password, verify=verify) as s2:
+            info = s2.get(Space, first_id)
         _print_model(info, label=f"Space info  id={info.site_id}  {info.site_name!r}")
 
         _print_section("Cross-check: keys in list[0] vs info")
-        list_keys = set(spaces[0].model_dump(exclude_none=False)) | set(spaces[0].model_extra or {})
-        info_keys = set(info.model_dump(exclude_none=False)) | set(info.model_extra or {})
-        only_in_list = list_keys - info_keys
-        only_in_info = info_keys - list_keys
-        if only_in_list:
-            print(f"  Keys only in list response:  {sorted(only_in_list)}")
-        if only_in_info:
-            print(f"  Keys only in info response:  {sorted(only_in_info)}")
-        if not only_in_list and not only_in_info:
-            print("  ✓  Both responses contain exactly the same set of keys")
+        _cross_check(spaces[0], info)
 
     _model_extra_summary(list(spaces), "Space")
 
@@ -263,11 +230,10 @@ def main() -> None:
 
     print(f"Connecting to https://{host}/ (verify={verify})")
 
-    with Session(host, username, password, verify=verify) as s:
-        if args.command == "subnet":
-            cmd_subnet(s, args)
-        elif args.command == "space":
-            cmd_space(s, args)
+    if args.command == "subnet":
+        cmd_subnet(host, username, password, verify, args)
+    elif args.command == "space":
+        cmd_space(host, username, password, verify, args)
 
 
 if __name__ == "__main__":

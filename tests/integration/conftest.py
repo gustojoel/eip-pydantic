@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 
 from eip_pydantic import AsyncSession, Session
 
+
+
 load_dotenv()
 
 _HOST = os.getenv("EIP_HOST", "")

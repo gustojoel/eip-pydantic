@@ -4,13 +4,14 @@ Wire-format fixtures are based on real ip_site_list / ip_site_info responses
 with names and IDs anonymised.
 """
 
-import pytest
-import respx
 import httpx
+import respx
 
 from eip_pydantic import Session
 from eip_pydantic.models.base import RowEnabled
 from eip_pydantic.models.space import Space
+
+
 
 BASE = "https://solidserver.example.com/"
 HOST = "solidserver.example.com"
@@ -209,7 +210,7 @@ def test_space_no_model_extra_on_info_row() -> None:
 @respx.mock
 def test_space_list_returns_list_of_spaces() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_LIST_ROW, _CHILD_ROW])
+        return_value=httpx.Response(200, json=[_LIST_ROW, _CHILD_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         spaces = s.list(Space)
@@ -222,7 +223,7 @@ def test_space_list_returns_list_of_spaces() -> None:
 @respx.mock
 def test_space_info_returns_single_space() -> None:
     respx.get(f"{BASE}rest/ip_site_info").mock(
-        return_value=httpx.Response(200, json=[_INFO_ROW])
+        return_value=httpx.Response(200, json=[_INFO_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         sp = s.get(Space, 7)
@@ -234,7 +235,7 @@ def test_space_info_returns_single_space() -> None:
 @respx.mock
 def test_space_list_sends_where_param() -> None:
     route = respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_LIST_ROW])
+        return_value=httpx.Response(200, json=[_LIST_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Space, where="site_name='global'")
@@ -245,8 +246,13 @@ def test_space_list_sends_where_param() -> None:
 @respx.mock
 def test_space_list_sends_limit_param() -> None:
     route = respx.get(f"{BASE}rest/ip_site_list").mock(
-        return_value=httpx.Response(200, json=[_LIST_ROW])
+        return_value=httpx.Response(200, json=[_LIST_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Space, limit=5)
     assert route.calls[0].request.url.params["limit"] == "5"
+
+
+def test_space_coerce_non_dict_passthrough() -> None:
+    sentinel = object()
+    assert Space._coerce(sentinel) is sentinel

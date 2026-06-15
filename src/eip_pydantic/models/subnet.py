@@ -8,6 +8,7 @@ from pydantic import Field, model_validator
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
 
 
+
 class Subnet(SolidServerModel):
     """An EfficientIP IPv4 network — either a block or a subnet.
 
@@ -197,13 +198,13 @@ class Subnet(SolidServerModel):
             return super().build_request(operation, **kwargs)
         if self.start_hostaddr is None or self.subnet_size is None or self.site_id is None:
             raise ValueError(
-                "start_hostaddr, subnet_size, and site_id are required to create a Subnet"
+                "start_hostaddr, subnet_size, and site_id are required to create a Subnet",
             )
         params = self.write_params()
         params["subnet_addr"] = str(self.start_hostaddr)
         params["subnet_prefix"] = str(32 - int(math.log2(self.subnet_size)))
         params["site_id"] = str(self.site_id)
-        return ("POST", type(self)._add_path, params)
+        return ("POST", type(self)._add_path, params)  # noqa: SLF001
 
     @model_validator(mode="before")
     @classmethod

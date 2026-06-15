@@ -52,6 +52,8 @@ A ``Condition`` or ``OrderByExpr`` can always be inspected::
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+
+
 if TYPE_CHECKING:
     from eip_pydantic.models.base import SolidServerModel
 
@@ -395,6 +397,9 @@ class ColumnCollection:
 
     def __init__(self, model_cls: "type[SolidServerModel]") -> None:
         self._model_cls = model_cls
+
+    def __dir__(self) -> list[str]:
+        return list(self._model_cls.model_fields.keys())
 
     def __getattr__(self, name: str) -> ColumnExpr:
         if name.startswith("_"):

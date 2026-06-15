@@ -1,15 +1,14 @@
+# pyright: reportUnusedImport=false
+
 import os
-import sys
-from pathlib import Path
+
 from dotenv import load_dotenv
-
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
 
 from eip_pydantic import Session
 from eip_pydantic.models.base import SolidServerModel
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
+
 
 
 def main() -> Session:

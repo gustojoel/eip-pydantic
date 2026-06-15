@@ -12,16 +12,18 @@ Key coercion facts verified here:
   - site_class_parameters and parent_subnet_class_parameters are _info-only
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from ipaddress import IPv4Address
 
+import httpx
 import pytest
 import respx
-import httpx
 
 from eip_pydantic import Session
 from eip_pydantic.models.base import RowEnabled
 from eip_pydantic.models.subnet import Subnet
+
+
 
 HOST = "solidserver.example.com"
 CREDS = ("admin", "secret")
@@ -356,13 +358,13 @@ def test_subnet_row_enabled_unmanaged() -> None:
 
 def test_subnet_trace_creation_date() -> None:
     s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    expected = datetime.fromtimestamp(1700000000, tz=timezone.utc)
+    expected = datetime.fromtimestamp(1700000000, tz=UTC)
     assert s.trace_creation_date == expected
 
 
 def test_subnet_trace_last_update_date() -> None:
     s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    expected = datetime.fromtimestamp(1700010000, tz=timezone.utc)
+    expected = datetime.fromtimestamp(1700010000, tz=UTC)
     assert s.trace_last_update_date == expected
 
 
@@ -472,7 +474,7 @@ def test_subnet_no_model_extra_on_info_row() -> None:
 @respx.mock
 def test_subnet_list_returns_list_of_subnets() -> None:
     respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_LIST_ROW, _BLOCK_LIST_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_LIST_ROW, _BLOCK_LIST_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         subnets = s.list(Subnet)
@@ -485,7 +487,7 @@ def test_subnet_list_returns_list_of_subnets() -> None:
 @respx.mock
 def test_subnet_info_returns_single_subnet() -> None:
     respx.get(f"{BASE}rest/ip_block_subnet_info").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_INFO_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_INFO_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         sn = s.get(Subnet, 42)
@@ -497,7 +499,7 @@ def test_subnet_info_returns_single_subnet() -> None:
 @respx.mock
 def test_subnet_list_sends_where_param() -> None:
     route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_LIST_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_LIST_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where="site_id='7'")
@@ -507,10 +509,21 @@ def test_subnet_list_sends_where_param() -> None:
 @respx.mock
 def test_subnet_list_sends_limit_and_orderby() -> None:
     route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
-        return_value=httpx.Response(200, json=[_SUBNET_LIST_ROW])
+        return_value=httpx.Response(200, json=[_SUBNET_LIST_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, limit=10, orderby="start_ip_addr ASC")
     params = route.calls[0].request.url.params
     assert params["limit"] == "10"
     assert params["ORDERBY"] == "start_ip_addr ASC"
+
+
+def test_subnet_build_request_create_missing_fields_raises() -> None:
+    sn = Subnet.model_validate({"subnet_id": "42"})
+    with pytest.raises(ValueError, match="start_hostaddr"):
+        sn.build_request("create")
+
+
+def test_subnet_coerce_non_dict_passthrough() -> None:
+    sentinel = object()
+    assert Subnet._coerce(sentinel) is sentinel

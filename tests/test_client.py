@@ -8,6 +8,7 @@ from eip_pydantic import AsyncEipClient, EipClient
 from eip_pydantic.exceptions import ApiError, AuthenticationError, NotFoundError
 
 
+
 BASE = "https://solidserver.example.com/"
 
 
@@ -22,25 +23,22 @@ def test_sync_get_ok() -> None:
 @respx.mock
 def test_sync_raises_401() -> None:
     respx.get(f"{BASE}ip_address").mock(return_value=httpx.Response(401, text="Unauthorized"))
-    with EipClient("solidserver.example.com", "admin", "wrong") as client:
-        with pytest.raises(AuthenticationError):
-            client.get("ip_address")
+    with EipClient("solidserver.example.com", "admin", "wrong") as client, pytest.raises(AuthenticationError):
+        client.get("ip_address")
 
 
 @respx.mock
 def test_sync_raises_404() -> None:
     respx.get(f"{BASE}missing").mock(return_value=httpx.Response(404, text="Not Found"))
-    with EipClient("solidserver.example.com", "admin", "secret") as client:
-        with pytest.raises(NotFoundError):
-            client.get("missing")
+    with EipClient("solidserver.example.com", "admin", "secret") as client, pytest.raises(NotFoundError):
+        client.get("missing")
 
 
 @respx.mock
 def test_sync_raises_generic_api_error() -> None:
     respx.get(f"{BASE}bad").mock(return_value=httpx.Response(500, text="Server Error"))
-    with EipClient("solidserver.example.com", "admin", "secret") as client:
-        with pytest.raises(ApiError):
-            client.get("bad")
+    with EipClient("solidserver.example.com", "admin", "secret") as client, pytest.raises(ApiError):
+        client.get("bad")
 
 
 @respx.mock

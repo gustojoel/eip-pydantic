@@ -11,6 +11,7 @@ from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
 
 
+
 BASE = "https://solidserver.example.com/"
 HOST = "solidserver.example.com"
 CREDS = ("admin", "secret")
@@ -152,7 +153,7 @@ def test_build_class_request_use_searched_path_false() -> None:
 
 
 def test_build_class_request_no_prefix_or_size_raises() -> None:
-    with pytest.raises(ValueError, match="prefix.*size"):
+    with pytest.raises(ValueError, match=r"prefix.*size"):
         FreeSubnet.build_class_request("find_free")
 
 
@@ -194,8 +195,8 @@ def test_find_free_subnet_prefix_sends_options() -> None:
     with Session(HOST, *CREDS) as s:
         results = s.find_free_subnet(prefix=24, space=7)
     assert route.called
-    assert route.calls[0].request.url.params["prefix"] == "24"
-    assert route.calls[0].request.url.params["site_id"] == "7"
+    assert route.calls.last.request.url.params["prefix"] == "24"
+    assert route.calls.last.request.url.params["site_id"] == "7"
     assert len(results) == 2
     assert all(isinstance(r, FreeSubnet) for r in results)
     assert results[0].start_hostaddr == IPv4Address("10.0.0.0")
@@ -208,7 +209,7 @@ def test_find_free_subnet_size_param() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.find_free_subnet(size=256)
-    assert route.calls[0].request.url.params["size"] == "256"
+    assert route.calls.last.request.url.params["size"] == "256"
 
 
 @respx.mock
@@ -219,7 +220,7 @@ def test_find_free_subnet_space_object() -> None:
     sp = Space.model_validate(_SPACE_ROW)
     with Session(HOST, *CREDS) as s:
         s.find_free_subnet(prefix=30, space=sp)
-    assert route.calls[0].request.url.params["site_id"] == "7"
+    assert route.calls.last.request.url.params["site_id"] == "7"
 
 
 @respx.mock
@@ -230,7 +231,7 @@ def test_find_free_subnet_subnet_object() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
     with Session(HOST, *CREDS) as s:
         s.find_free_subnet(prefix=30, subnet=sn)
-    assert route.calls[0].request.url.params["block_id"] == "3"
+    assert route.calls.last.request.url.params["block_id"] == "3"
 
 
 @respx.mock
@@ -244,9 +245,8 @@ def test_find_free_subnet_empty_result() -> None:
 
 
 def test_find_free_subnet_no_prefix_or_size_raises() -> None:
-    with Session(HOST, *CREDS) as s:
-        with pytest.raises(ValueError, match="prefix.*size"):
-            s.find_free_subnet()
+    with Session(HOST, *CREDS) as s, pytest.raises(ValueError, match=r"prefix.*size"):
+        s.find_free_subnet()
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +281,7 @@ async def test_async_find_free_subnet_all_optional_params() -> None:
             use_searched_path=True,
             where="cost='0'",
         )
-    p = route.calls[0].request.url.params
+    p = route.calls.last.request.url.params
     assert p["size"] == "256"
     assert p["site_id"] == "7"
     assert p["max_find"] == "5"
@@ -295,5 +295,5 @@ async def test_async_find_free_subnet_all_optional_params() -> None:
 @respx.mock
 async def test_async_find_free_subnet_no_prefix_or_size_raises() -> None:
     async with AsyncSession(HOST, *CREDS) as s:
-        with pytest.raises(ValueError, match="prefix.*size"):
+        with pytest.raises(ValueError, match=r"prefix.*size"):
             await s.find_free_subnet()

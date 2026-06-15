@@ -162,7 +162,7 @@ def test_session_list_auto_injects_tags_from_where() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where=Subnet.c.foobar == "baz")
-    params = route.calls[0].request.url.params
+    params = route.calls.last.request.url.params
     assert params["WHERE"] == "tag_network_foobar='baz'"
     assert params["TAGS"] == "network.foobar"
 
@@ -174,7 +174,7 @@ def test_session_list_auto_injects_tags_from_orderby() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, orderby=Subnet.c.priority.asc())
-    params = route.calls[0].request.url.params
+    params = route.calls.last.request.url.params
     assert params["ORDERBY"] == "tag_network_priority ASC"
     assert params["TAGS"] == "network.priority"
 
@@ -186,7 +186,7 @@ def test_session_list_merges_auto_and_explicit_tags() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where=Subnet.c.foobar == "baz", tags="network.other")
-    params = route.calls[0].request.url.params
+    params = route.calls.last.request.url.params
     assert "network.foobar" in params["TAGS"]
     assert "network.other" in params["TAGS"]
 
@@ -198,7 +198,7 @@ def test_session_list_real_field_no_tags_injected() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Subnet, where=Subnet.c.subnet_name == "foo")
-    params = route.calls[0].request.url.params
+    params = route.calls.last.request.url.params
     assert params["WHERE"] == "subnet_name='foo'"
     assert "TAGS" not in params
 
@@ -210,7 +210,7 @@ def test_session_list_condition_where_with_str_orderby() -> None:
     )
     with Session(HOST, *CREDS) as s:
         s.list(Space, where=Space.c.site_name == "global", orderby="site_name ASC")
-    params = route.calls[0].request.url.params
+    params = route.calls.last.request.url.params
     assert params["WHERE"] == "site_name='global'"
     assert params["ORDERBY"] == "site_name ASC"
     assert "TAGS" not in params
@@ -252,7 +252,7 @@ def test_column_collection_dir_returns_field_names() -> None:
 
 def test_column_collection_private_attr_raises() -> None:
     with pytest.raises(AttributeError):
-        _ = getattr(Subnet.c, "_private")
+        _ = Subnet.c._private
 
 
 def test_column_collection_no_prefix_unknown_field() -> None:

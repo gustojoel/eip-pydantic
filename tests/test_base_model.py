@@ -130,7 +130,7 @@ def test_write_params_base_returns_empty() -> None:
 
 def test_build_class_request_unknown_op_raises() -> None:
     with pytest.raises(ValueError, match="Unknown class operation"):
-        SolidServerModel.build_class_request("count")
+        SolidServerModel.build_class_request("frobnicate")
 
 
 def test_build_request_info_no_id_raises() -> None:
@@ -159,7 +159,7 @@ def test_build_request_unknown_op_raises() -> None:
 
 def test_parse_response_unknown_op_raises() -> None:
     with pytest.raises(ValueError, match="Unknown parse operation"):
-        SolidServerModel.parse_response("count", [])
+        SolidServerModel.parse_response("frobnicate", [])
 
 
 def test_apply_response_delete_noop() -> None:

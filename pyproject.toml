@@ -25,6 +25,14 @@ pytest-cov = "^7.1.0"
 ruff = "^0.15.17"
 pdoc = "^16.0.0"
 
+[tool.pyright]
+include = ["src", "tests"]
+strict = ["src"]
+typeCheckingMode = "strict"
+reportPrivateUsage = "none"
+reportCallIssue = "none"
+reportUnknownMemberType = "none"
+
 [tool.mypy]
 strict = true
 python_version = "3.11"

@@ -26,6 +26,7 @@ class Space(SolidServerModel):
     _pk_field: ClassVar[str] = "site_id"
     _list_path: ClassVar[str] = "rest/ip_site_list"
     _info_path: ClassVar[str] = "rest/ip_site_info"
+    _count_path: ClassVar[str] = "rest/ip_site_count"
     _add_path: ClassVar[str] = "rest/ip_site_add"
     _delete_path: ClassVar[str] = "rest/ip_site_delete"
 

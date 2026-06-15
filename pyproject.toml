@@ -1,0 +1,41 @@
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "eip-pydantic"
+version = "0.1.0"
+description = "A typed SDK for EfficientIP SolidServer"
+packages = [{ include = "eip_pydantic", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+httpx = "^0.27"
+pydantic = "^2.7"
+pyright = "^1.1.410"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.10"
+pytest = "^8"
+pytest-asyncio = "^0.23"
+respx = "^0.21"
+python-dotenv = "^1.2.2"
+ipython = "^9.14.1"
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.autopep8]
+ignore = ['E303']
+max-line-length = 120
+
+[tool.isort]
+profile = "hug"
+line_length = 120
+lines_after_imports = 3

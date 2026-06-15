@@ -167,6 +167,27 @@ class EipClient(_BaseEipClient):
         self._raise_for_status(response)
         return response.json()
 
+    def options(self, path: str, **params: Any) -> Any:
+        """Send an OPTIONS request and return the parsed JSON response.
+
+        Used for RPC-style services under ``rpc/`` (e.g. ``ip_find_free_subnet``).
+
+        Args:
+            path: API path relative to the base URL, e.g. ``"rpc/ip_find_free_subnet"``.
+            **params: Query-string parameters forwarded to the API.
+
+        Returns:
+            Parsed JSON — typically a ``list[dict]`` of result rows.
+
+        Raises:
+            AuthenticationError: On 401 responses.
+            NotFoundError: On 404 responses.
+            ApiError: On other non-2xx responses.
+        """
+        response = self._http.options(path, params=params or None)
+        self._raise_for_status(response)
+        return response.json() if response.content else []
+
 
 class AsyncEipClient(_BaseEipClient):
     """Asynchronous HTTP transport for the EfficientIP SolidServer REST API.
@@ -288,3 +309,24 @@ class AsyncEipClient(_BaseEipClient):
         response = await self._http.delete(path, params=params or None)
         self._raise_for_status(response)
         return response.json()
+
+    async def options(self, path: str, **params: Any) -> Any:
+        """Send an OPTIONS request and return the parsed JSON response.
+
+        Used for RPC-style services under ``rpc/`` (e.g. ``ip_find_free_subnet``).
+
+        Args:
+            path: API path relative to the base URL, e.g. ``"rpc/ip_find_free_subnet"``.
+            **params: Query-string parameters forwarded to the API.
+
+        Returns:
+            Parsed JSON — typically a ``list[dict]`` of result rows.
+
+        Raises:
+            AuthenticationError: On 401 responses.
+            NotFoundError: On 404 responses.
+            ApiError: On other non-2xx responses.
+        """
+        response = await self._http.options(path, params=params or None)
+        self._raise_for_status(response)
+        return response.json() if response.content else []

@@ -32,3 +32,11 @@ class AuthenticationError(ApiError):
 
 class NotFoundError(ApiError):
     """Raised on 404 Not Found responses."""
+
+
+class InternalError(SolidServerError):
+    """Raised when an internal programming invariant is violated.
+
+    This exception represents a bug in the calling code, not an API or network
+    error — e.g. calling an operation on a model class that does not support it.
+    """

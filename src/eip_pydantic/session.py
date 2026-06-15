@@ -1,7 +1,9 @@
 """Sync and async unit-of-work sessions."""
 
+import builtins
 import contextlib
 from collections.abc import Iterable
+from ipaddress import IPv4Address
 from types import TracebackType
 from typing import Any, Self, TypeVar, cast
 
@@ -10,6 +12,8 @@ import httpx
 from eip_pydantic.client import AsyncEipClient, EipClient
 from eip_pydantic.expressions import Condition, OrderByExpr, and_all
 from eip_pydantic.models.base import SolidServerModel
+from eip_pydantic.models.space import Space
+from eip_pydantic.models.subnet import FreeSubnet, Subnet
 
 
 
@@ -297,6 +301,55 @@ class Session(BaseSession):
         self._put_cache(obj)
         return obj
 
+    # ---- RPC ----------------------------------------------------------------
+
+    def find_free_subnet(
+        self,
+        *,
+        prefix: int | None = None,
+        size: int | None = None,
+        space: int | Space | None = None,
+        max_find: int | None = None,
+        begin_addr: IPv4Address | str | None = None,
+        end_addr: IPv4Address | str | None = None,
+        subnet: int | Subnet | None = None,
+        use_searched_path: bool | None = None,
+        where: str | Condition | None = None,
+    ) -> builtins.list[FreeSubnet]:
+        """Return candidate free subnets of the requested size via ``ip_find_free_subnet``.
+
+        Exactly one of ``prefix`` or ``size`` must be supplied.  Results are
+        ordered by ``cost`` ascending (lowest = least fragmentation).
+
+        Args:
+            prefix: CIDR prefix length (1–32) of the desired subnet.
+            size: Number of IP addresses the desired subnet must contain.
+            space: Restrict search to this space — an integer ID or a
+                :class:`Space` instance.
+            max_find: Maximum number of candidates to return (default 10).
+            begin_addr: Start of the address range to search within.
+            end_addr: End of the address range to search within.
+            subnet: Restrict search to within this parent block — an integer ID
+                or a :class:`Subnet` instance.
+            use_searched_path: If ``True``, also recurse into non-terminal
+                subnets within the given block (``use_searched_path=1``).
+            where: SQL-style filter applied server-side to the result set.
+
+        Returns:
+            List of :class:`FreeSubnet` rows, each describing one available slot.
+
+        Raises:
+            ValueError: If neither ``prefix`` nor ``size`` is provided.
+        """
+        verb, path, params = FreeSubnet.build_class_request(
+            "find_free",
+            prefix=prefix, size=size, space=space, max_find=max_find,
+            begin_addr=begin_addr, end_addr=end_addr, subnet=subnet,
+            use_searched_path=use_searched_path, where=where,
+        )
+        raw = self._dispatch(verb, path, params)
+        return FreeSubnet.parse_response("find_free", raw)
+
     # ---- Write --------------------------------------------------------------
 
     def delete(self, obj: SolidServerModel) -> None:
@@ -367,6 +420,8 @@ class Session(BaseSession):
                 return self._client.put(path, **params)
             case "DELETE":
                 return self._client.delete(path, **params)
+            case "OPTIONS":
+                return self._client.options(path, **params)
             case _:
                 raise ValueError(f"Unsupported HTTP verb: {verb!r}")
 
@@ -515,6 +570,55 @@ class AsyncSession(BaseSession):
         self._put_cache(obj)
         return obj
 
+    # ---- RPC ----------------------------------------------------------------
+
+    async def find_free_subnet(
+        self,
+        *,
+        prefix: int | None = None,
+        size: int | None = None,
+        space: int | Space | None = None,
+        max_find: int | None = None,
+        begin_addr: IPv4Address | str | None = None,
+        end_addr: IPv4Address | str | None = None,
+        subnet: int | Subnet | None = None,
+        use_searched_path: bool | None = None,
+        where: str | Condition | None = None,
+    ) -> builtins.list[FreeSubnet]:
+        """Return candidate free subnets of the requested size via ``ip_find_free_subnet``.
+
+        Exactly one of ``prefix`` or ``size`` must be supplied.  Results are
+        ordered by ``cost`` ascending (lowest = least fragmentation).
+
+        Args:
+            prefix: CIDR prefix length (1–32) of the desired subnet.
+            size: Number of IP addresses the desired subnet must contain.
+            space: Restrict search to this space — an integer ID or a
+                :class:`Space` instance.
+            max_find: Maximum number of candidates to return (default 10).
+            begin_addr: Start of the address range to search within.
+            end_addr: End of the address range to search within.
+            subnet: Restrict search to within this parent block — an integer ID
+                or a :class:`Subnet` instance.
+            use_searched_path: If ``True``, also recurse into non-terminal
+                subnets within the given block (``use_searched_path=1``).
+            where: SQL-style filter applied server-side to the result set.
+
+        Returns:
+            List of :class:`FreeSubnet` rows, each describing one available slot.
+
+        Raises:
+            ValueError: If neither ``prefix`` nor ``size`` is provided.
+        """
+        verb, path, params = FreeSubnet.build_class_request(
+            "find_free",
+            prefix=prefix, size=size, space=space, max_find=max_find,
+            begin_addr=begin_addr, end_addr=end_addr, subnet=subnet,
+            use_searched_path=use_searched_path, where=where,
+        )
+        raw = await self._dispatch(verb, path, params)
+        return FreeSubnet.parse_response("find_free", raw)
+
     # ---- Write --------------------------------------------------------------
 
     async def delete(self, obj: SolidServerModel) -> None:
@@ -572,5 +676,7 @@ class AsyncSession(BaseSession):
                 return await self._client.put(path, **params)
             case "DELETE":
                 return await self._client.delete(path, **params)
+            case "OPTIONS":
+                return await self._client.options(path, **params)
             case _:
                 raise ValueError(f"Unsupported HTTP verb: {verb!r}")

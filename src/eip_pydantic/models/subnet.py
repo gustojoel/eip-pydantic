@@ -1,11 +1,134 @@
 import math
 from datetime import datetime
 from ipaddress import IPv4Address
-from typing import Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from pydantic import Field, model_validator
 
+from eip_pydantic.exceptions import InternalError
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
+
+if TYPE_CHECKING:
+    from eip_pydantic.models.space import Space
+
+
+class FreeSubnet(SolidServerModel):
+    """One candidate slot returned by ``ip_find_free_subnet``.
+
+    Each row represents an available address range that could hold a new
+    subnet of the requested size.  Results are ordered by ``cost`` ascending
+    (lowest cost = least fragmentation).
+    """
+
+    _find_free_path: ClassVar[str] = "rpc/ip_find_free_subnet"
+
+    start_ip_addr: IPv4Address | None = None
+    start_hostaddr: IPv4Address | None = None
+    block_name: str | None = None
+    cost: int | None = None
+    block_id: int | None = None
+    site_id: int | None = None
+
+    @classmethod
+    def build_class_request(
+        cls,
+        operation: str,
+        **kwargs: Any,
+    ) -> tuple[str, str, dict[str, str]]:
+        """Build the request descriptor for ``ip_find_free_subnet``.
+
+        Args:
+            operation: Must be ``'find_free'``.
+            prefix: CIDR prefix length (1–32) of the desired subnet.
+            size: Number of IP addresses the desired subnet must contain.
+            space: Space to search in — an integer ID or a :class:`Space` instance.
+            subnet: Parent block to restrict the search — an integer ID or a
+                :class:`Subnet` instance.
+            max_find: Maximum number of candidates to return (default 10).
+            begin_addr: Start of the address range to search within.
+            end_addr: End of the address range to search within.
+            use_searched_path: If ``True``, also recurse into non-terminal subnets
+                within the given block.
+            where: SQL-style filter applied server-side.
+
+        Returns:
+            ``("OPTIONS", path, params)`` triple ready for :meth:`Session._dispatch`.
+
+        Raises:
+            InternalError: If ``operation`` is not ``'find_free'``.
+            ValueError: If neither ``prefix`` nor ``size`` is provided.
+        """
+        if operation != "find_free":
+            raise InternalError(
+                f"FreeSubnet.build_class_request only supports 'find_free', got {operation!r}",
+            )
+        prefix = kwargs.get("prefix")
+        size = kwargs.get("size")
+        if prefix is None and size is None:
+            raise ValueError("find_free_subnet requires either 'prefix' or 'size'")
+        params: dict[str, str] = {}
+        if prefix is not None:
+            params["prefix"] = str(prefix)
+        if size is not None:
+            params["size"] = str(size)
+        if (space := kwargs.get("space")) is not None:
+            site_id = space if isinstance(space, int) else space.id
+            if site_id is not None:
+                params["site_id"] = str(site_id)
+        if (subnet := kwargs.get("subnet")) is not None:
+            block_id = subnet if isinstance(subnet, int) else subnet.id
+            if block_id is not None:
+                params["block_id"] = str(block_id)
+        if (v := kwargs.get("max_find")) is not None:
+            params["max_find"] = str(v)
+        if (v := kwargs.get("begin_addr")) is not None:
+            params["begin_addr"] = str(v)
+        if (v := kwargs.get("end_addr")) is not None:
+            params["end_addr"] = str(v)
+        if (usp := kwargs.get("use_searched_path")) is not None:
+            params["use_searched_path"] = "1" if usp else "0"
+        if (where := kwargs.get("where")) is not None:
+            params["WHERE"] = str(where)
+        return ("OPTIONS", cls._find_free_path, params)
+
+    @classmethod
+    def parse_response(cls, operation: str, data: Any) -> "list[FreeSubnet]":
+        """Parse the raw JSON rows from ``ip_find_free_subnet`` into model instances.
+
+        Args:
+            operation: Must be ``'find_free'``.
+            data: Raw list of dicts from the API response.
+
+        Returns:
+            List of :class:`FreeSubnet` instances.
+
+        Raises:
+            InternalError: If ``operation`` is not ``'find_free'``.
+        """
+        if operation != "find_free":
+            raise InternalError(
+                f"FreeSubnet.parse_response only supports 'find_free', got {operation!r}",
+            )
+        return [cls.model_validate(item) for item in data]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        v = cast(dict[str, Any], data)
+        out: dict[str, Any] = {}
+        for key, val in v.items():
+            match key:
+                case "start_ip_addr":
+                    out[key] = cls._as_hex_ipv4(val)
+                case "start_hostaddr":
+                    out[key] = cls._as_dotted_ipv4(val)
+                case "cost" | "block_id" | "site_id" | "errno":
+                    out[key] = cls._as_int(val)
+                case _:
+                    out[key] = cls._as_str(val) if key in cls.model_fields else val
+        return out
 
 
 

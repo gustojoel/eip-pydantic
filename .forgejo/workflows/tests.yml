@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: podman
+    container:
+      image: python:3.13
+
+    steps:
+      - name: Prepare container
+        run: |
+          wget http://net.eu.hcnet.biz/pub/ubuntu/deb/hirslanden-ca-certificates_20251127-1_all.deb
+          dpkg -i hirslanden-ca-certificates_20251127-1_all.deb
+          apt-get update && apt-get install -y nodejs python3-poetry
+
+      - uses: actions/checkout@v4
+
+      - name: Cache virtualenv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-poetry-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install
+
+      - name: Run tests
+        run: poetry run pytest

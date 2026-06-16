@@ -159,7 +159,7 @@ class Subnet(SolidServerModel):
     # ------------------------------------------------------------------
     # Core identity
     # ------------------------------------------------------------------
-    subnet_id: int = Field(frozen=True)
+    subnet_id: int | None = Field(None, frozen=True)
     type: Literal["block", "subnet"] | None = Field(None, frozen=True)
     subnet_name: str | None = None
     subnet_level: int | None = Field(None, frozen=True)   # 0 = block, 1+ = subnet depth

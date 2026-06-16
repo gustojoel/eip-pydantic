@@ -53,6 +53,7 @@ def test_subnet_info(session: Session) -> None:
     if not subnets:
         pytest.skip("No subnets available to test subnet info")
     subnet_id = subnets[0].subnet_id
+    assert subnet_id is not None
     info = session.get(Subnet, subnet_id)
     assert isinstance(info, Subnet)
     assert info.subnet_id == subnet_id
@@ -62,6 +63,7 @@ def test_subnet_info_has_ip_addresses(session: Session) -> None:
     subnets = session.list(Subnet, limit=1)
     if not subnets:
         pytest.skip("No subnets available")
+    assert subnets[0].subnet_id is not None
     info = session.get(Subnet, subnets[0].subnet_id)
     assert info.start_hostaddr is not None, "start_hostaddr should be present"
     assert info.end_hostaddr is not None, "end_hostaddr should be present"
@@ -92,6 +94,7 @@ async def test_async_subnet_info(async_session: AsyncSession) -> None:
     subnets = await async_session.list(Subnet, limit=1)
     if not subnets:
         pytest.skip("No subnets available")
+    assert subnets[0].subnet_id is not None
     info = await async_session.get(Subnet, subnets[0].subnet_id)
     assert isinstance(info, Subnet)
     assert info.subnet_id == subnets[0].subnet_id

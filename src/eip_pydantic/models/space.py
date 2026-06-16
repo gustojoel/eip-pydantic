@@ -33,7 +33,7 @@ class Space(SolidServerModel):
     # ------------------------------------------------------------------
     # Core identity
     # ------------------------------------------------------------------
-    site_id: int = Field(frozen=True)
+    site_id: int | None = Field(None, frozen=True)
     site_name: str | None = None
     site_description: str | None = None
     site_is_template: bool | None = Field(None, frozen=True)

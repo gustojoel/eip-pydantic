@@ -26,44 +26,32 @@ _DEFAULT_TIMEOUT = httpx.Timeout(30.0)
 class BaseSession:
     """Shared state and non-I/O methods for sync and async sessions.
 
-    Holds the tracked-object list and the identity cache.  Subclasses add
+    Holds the identity cache and the pending-creation list.  Subclasses add
     the HTTP transport and implement all I/O methods (``list``, ``get``,
     ``delete``, ``flush``) as sync or async.
 
     Attributes:
-        _tracked: Objects registered via ``add()`` or ``new()`` that will be
-            written on ``flush()``.
-        _cache: Identity map keyed by ``(type, pk)`` so that repeated
-            ``get()`` calls for the same object return the same instance.
+        _new: Objects registered via ``new()`` pending a POST on ``flush()``.
+        _cache: Identity map keyed by ``(type, pk)``.  Every object in the
+            cache is eligible for a PUT on ``flush()`` if dirty.  Populated by
+            ``list()`` and ``get()``.
     """
 
     def __init__(self) -> None:
-        self._tracked: list[SolidServerModel] = []
+        self._new: list[SolidServerModel] = []
         self._cache: _Cache = {}
-
-    def add(self, obj: SolidServerModel) -> None:
-        """Track an existing object so that dirty fields are written on ``flush()``.
-
-        Idempotent — adding the same object twice has no effect.
-
-        Args:
-            obj: A model instance loaded from the API whose mutable fields
-                may be changed before the session exits.
-        """
-        if obj not in self._tracked:
-            self._tracked.append(obj)
 
     def new(self, obj: SolidServerModel) -> None:
         """Register a new (unsaved) object for creation on ``flush()``.
 
-        Calls ``obj.mark_new()`` and appends to the tracked list.
+        Calls ``obj.mark_new()`` and appends to the pending-creation list.
 
         Args:
             obj: A freshly constructed model instance that has not yet been
                 saved to the server.
         """
         obj.mark_new()
-        self._tracked.append(obj)
+        self._new.append(obj)
 
     def _put_cache(self, obj: SolidServerModel) -> None:
         if (obj_id := obj.id) is not None:
@@ -149,7 +137,6 @@ class BaseSession:
                 result.append(cached)
             else:
                 self._put_cache(obj)
-                self.add(obj)
                 result.append(obj)
         return result
 
@@ -306,8 +293,8 @@ class Session(BaseSession):
 
         Checks the identity cache first.  On a cache miss, calls the
         appropriate ``*_info`` endpoint and caches the result.  The fetched
-        object is added to the cache but **not** to the tracked list — call
-        ``session.add(obj)`` explicitly if you intend to mutate it.
+        object is automatically eligible for a PUT on ``flush()`` if any of
+        its fields are mutated.
 
         Args:
             cls: The model class to fetch (e.g. ``Space``, ``Subnet``).
@@ -413,7 +400,7 @@ class Session(BaseSession):
         """Delete the object on the server immediately.
 
         Issues the DELETE request, removes the object from the identity cache,
-        and removes it from the tracked list if present.
+        and removes it from the pending-creation list if present.
 
         Args:
             obj: The model instance to delete.  Must have a non-``None`` id.
@@ -423,27 +410,29 @@ class Session(BaseSession):
         if (obj_id := obj.id) is not None:
             self._cache.pop((type(obj), obj_id), None)
         with contextlib.suppress(ValueError):
-            self._tracked.remove(obj)
+            self._new.remove(obj)
 
     def flush(self) -> None:
-        """Create or update all tracked objects that are new or dirty.
+        """Create or update all objects that are new or dirty.
 
-        Iterates the tracked list in insertion order.  For each object:
+        Pass 1 — iterates ``_new`` in insertion order and POSTs each object
+        whose ``is_new`` flag is still set (guard against retry after a
+        partial failure).  Newly created objects are moved into the cache.
 
-        * If ``is_new`` is ``True`` → sends a POST (``create``).
-        * If ``is_dirty`` is ``True`` → sends a PUT (``update``).
-        * Otherwise → no-op.
+        Pass 2 — iterates the cache in insertion order and PUTs every object
+        whose ``is_dirty`` flag is set.
 
         After each successful write the object's state is reset via
         ``apply_response()``.
         """
-        for obj in self._tracked:
+        for obj in self._new:
             if obj.is_new:
                 verb, path, params = obj.build_request("create")
                 raw = self._dispatch(verb, path, params)
                 obj.apply_response("create", raw)
                 self._put_cache(obj)
-            elif obj.is_dirty:
+        for obj in self._cache.values():
+            if obj.is_dirty:
                 verb, path, params = obj.build_request("update")
                 raw = self._dispatch(verb, path, params)
                 obj.apply_response("update", raw)
@@ -720,17 +709,18 @@ class AsyncSession(BaseSession):
         if (obj_id := obj.id) is not None:
             self._cache.pop((type(obj), obj_id), None)
         with contextlib.suppress(ValueError):
-            self._tracked.remove(obj)
+            self._new.remove(obj)
 
     async def flush(self) -> None:
-        """Create or update all tracked objects that are new or dirty."""
-        for obj in self._tracked:
+        """Create or update all objects that are new or dirty."""
+        for obj in self._new:
             if obj.is_new:
                 verb, path, params = obj.build_request("create")
                 raw = await self._dispatch(verb, path, params)
                 obj.apply_response("create", raw)
                 self._put_cache(obj)
-            elif obj.is_dirty:
+        for obj in self._cache.values():
+            if obj.is_dirty:
                 verb, path, params = obj.build_request("update")
                 raw = await self._dispatch(verb, path, params)
                 obj.apply_response("update", raw)

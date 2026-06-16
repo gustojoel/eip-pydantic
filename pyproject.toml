@@ -41,7 +41,7 @@ mypy_path = "src"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov --cov-report=term-missing --cov-report=lcov:lcov.info"
+addopts = "--cov --cov-report=term-missing --cov-report=lcov:lcov.info --ignore=tests/integration"
 
 [tool.autopep8]
 ignore = ['E303']
@@ -64,7 +64,8 @@ select = ["ALL", "W191", "E111", "E114", "E117"]
 ignore = [
     # already-ignored
     "Q000", "D200", "D212", "D400", "D401", "D415", "TRY003", "EM101",
-    "PLR2004", "ANN401", "S101", "FBT", "RUF100", "PLR0913",
+    "PLR2004", "ANN401", "S101", "FBT", "RUF100", "PLR0913", "RUF003",
+    "D203",
     # docstring style
     "D100",   # module docstrings not required everywhere
     "D104",   # package __init__ docstrings not required

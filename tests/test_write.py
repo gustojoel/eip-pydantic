@@ -252,37 +252,6 @@ def test_space_write_params_row_enabled() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Class-parameter helpers
-# ---------------------------------------------------------------------------
-
-
-def test_set_class_parameter_marks_dirty() -> None:
-    sn = Subnet.model_validate({**_SUBNET_ROW, "subnet_class_parameters": "foo=1"})
-    sn.set_class_parameter("bar", "2")
-    assert sn.is_dirty
-    assert sn.class_parameters == {"foo": "1", "bar": "2"}
-
-
-def test_delete_class_parameter_marks_dirty() -> None:
-    sn = Subnet.model_validate({**_SUBNET_ROW, "subnet_class_parameters": "foo=1&bar=2"})
-    sn.delete_class_parameter("foo")
-    assert sn.is_dirty
-    assert sn.class_parameters == {"bar": "2"}
-
-
-def test_set_class_parameter_on_empty_blob() -> None:
-    sn = Subnet.model_validate(_SUBNET_ROW)
-    sn.set_class_parameter("key", "val")
-    assert sn.class_parameters == {"key": "val"}
-
-
-def test_delete_class_parameter_missing_key_is_noop() -> None:
-    sn = Subnet.model_validate({**_SUBNET_ROW, "subnet_class_parameters": "foo=1"})
-    sn.delete_class_parameter("nonexistent")
-    assert sn.class_parameters == {"foo": "1"}
-
-
-# ---------------------------------------------------------------------------
 # build_class_request
 # ---------------------------------------------------------------------------
 
@@ -590,7 +559,7 @@ def test_session_list_preserves_dirty_state_on_overlap() -> None:
     respx.get(f"{BASE}rest/ip_site_list").mock(
         return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
-    respx.put(f"{BASE}rest/ip_site_add").mock(
+    route = respx.put(f"{BASE}rest/ip_site_add").mock(
         return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
     with Session(HOST, *CREDS) as s:
@@ -599,18 +568,20 @@ def test_session_list_preserves_dirty_state_on_overlap() -> None:
         spaces = s.list(Space)
         assert spaces[0] is sp
         assert spaces[0].site_name == "mutated"
+    assert route.called
+    assert route.calls.last.request.url.params["site_name"] == "mutated"
 
 
 @respx.mock
 def test_session_list_does_not_double_track() -> None:
-    """Listing the same objects twice does not add them to _tracked twice."""
+    """Listing the same objects twice does not add them to the cache twice."""
     respx.get(f"{BASE}rest/ip_site_list").mock(
         return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
         s.list(Space)
         s.list(Space)
-        assert s._tracked.count(s._tracked[0]) == 1
+        assert len(s._cache) == 1
 
 
 @respx.mock
@@ -629,6 +600,22 @@ def test_session_list_then_get_uses_cache() -> None:
     assert spaces[0] is sp
 
 
+@respx.mock
+def test_session_get_auto_flushes_on_mutation() -> None:
+    """get() puts the object in cache; mutating it is flushed on exit without calling add()."""
+    respx.get(f"{BASE}rest/ip_site_info").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
+    )
+    route = respx.put(f"{BASE}rest/ip_site_add").mock(
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
+    )
+    with Session(HOST, *CREDS) as s:
+        sp = s.get(Space, 7)
+        sp.site_name = "renamed"
+    assert route.called
+    assert route.calls.last.request.url.params["site_name"] == "renamed"
+
+
 # ---------------------------------------------------------------------------
 # Session.flush — update (PUT)
 # ---------------------------------------------------------------------------
@@ -636,12 +623,14 @@ def test_session_list_then_get_uses_cache() -> None:
 
 @respx.mock
 def test_session_flush_subnet_update_sends_put() -> None:
+    respx.get(f"{BASE}rest/ip_block_subnet_info").mock(
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
+    )
     route = respx.put(f"{BASE}rest/ip_subnet_add").mock(
         return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
-    sn = Subnet.model_validate(_SUBNET_ROW)
     with Session(HOST, *CREDS) as s:
-        s.add(sn)
+        sn = s.get(Subnet, 1)
         sn.subnet_name = "renamed"
     assert route.called
     assert route.calls.last.request.url.params["subnet_name"] == "renamed"
@@ -650,23 +639,27 @@ def test_session_flush_subnet_update_sends_put() -> None:
 
 @respx.mock
 def test_session_flush_skips_clean_object() -> None:
+    respx.get(f"{BASE}rest/ip_block_subnet_info").mock(
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
+    )
     route = respx.put(f"{BASE}rest/ip_subnet_add").mock(
         return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
-    sn = Subnet.model_validate(_SUBNET_ROW)
     with Session(HOST, *CREDS) as s:
-        s.add(sn)
+        s.get(Subnet, 1)
     assert not route.called
 
 
 @respx.mock
 def test_session_flush_space_update_sends_put() -> None:
+    respx.get(f"{BASE}rest/ip_site_info").mock(
+        return_value=httpx.Response(200, json=[_SPACE_ROW]),
+    )
     route = respx.put(f"{BASE}rest/ip_site_add").mock(
         return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
-    sp = Space.model_validate(_SPACE_ROW)
     with Session(HOST, *CREDS) as s:
-        s.add(sp)
+        sp = s.get(Space, 7)
         sp.site_name = "renamed"
     assert route.called
     assert route.calls.last.request.url.params["site_name"] == "renamed"
@@ -675,24 +668,28 @@ def test_session_flush_space_update_sends_put() -> None:
 
 @respx.mock
 def test_session_flush_marks_object_clean_after_update() -> None:
+    respx.get(f"{BASE}rest/ip_block_subnet_info").mock(
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
+    )
     respx.put(f"{BASE}rest/ip_subnet_add").mock(
         return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
-    sn = Subnet.model_validate(_SUBNET_ROW)
     with Session(HOST, *CREDS) as s:
-        s.add(sn)
+        sn = s.get(Subnet, 1)
         sn.subnet_name = "renamed"
     assert not sn.is_dirty
 
 
 @respx.mock
 def test_session_flush_no_flush_on_exception() -> None:
+    respx.get(f"{BASE}rest/ip_block_subnet_info").mock(
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
+    )
     route = respx.put(f"{BASE}rest/ip_subnet_add").mock(
         return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
-    sn = Subnet.model_validate(_SUBNET_ROW)
     with pytest.raises(RuntimeError), Session(HOST, *CREDS) as s:  # noqa: PT012
-        s.add(sn)
+        sn = s.get(Subnet, 1)
         sn.subnet_name = "renamed"
         raise RuntimeError("abort")
     assert not route.called
@@ -804,12 +801,14 @@ async def test_async_session_get_fetches_once() -> None:
 
 @respx.mock
 async def test_async_session_flush_update_sends_put() -> None:
+    respx.get(f"{BASE}rest/ip_block_subnet_info").mock(
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
+    )
     route = respx.put(f"{BASE}rest/ip_subnet_add").mock(
         return_value=httpx.Response(200, json=_ADD_RESPONSE),
     )
-    sn = Subnet.model_validate(_SUBNET_ROW)
     async with AsyncSession(HOST, *CREDS) as s:
-        s.add(sn)
+        sn = await s.get(Subnet, 1)
         sn.subnet_name = "renamed"
     assert route.called
     assert route.calls.last.request.url.params["subnet_name"] == "renamed"

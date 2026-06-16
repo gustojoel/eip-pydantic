@@ -53,6 +53,22 @@ class BaseSession:
         obj.mark_new()
         self._new.append(obj)
 
+    def create(self, cls: type[T], **kwargs: Any) -> T:
+        """Instantiate ``cls`` with ``kwargs``, register it for creation, and return it.
+
+        Equivalent to ``obj = cls(**kwargs); session.new(obj)`` but in one call.
+
+        Args:
+            cls: The model class to create (e.g. ``Space``, ``Subnet``).
+            **kwargs: Field values to pass to the model constructor.
+
+        Returns:
+            The new model instance, already registered for POST on ``flush()``.
+        """
+        obj = cls(**kwargs)
+        self.new(obj)
+        return obj
+
     def _put_cache(self, obj: SolidServerModel) -> None:
         if (obj_id := obj.id) is not None:
             self._cache[(type(obj), obj_id)] = obj

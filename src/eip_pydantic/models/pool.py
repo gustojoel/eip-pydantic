@@ -35,7 +35,7 @@ class Pool(SolidServerModel):
     # ------------------------------------------------------------------
     # Core identity
     # ------------------------------------------------------------------
-    pool_id: int = Field(frozen=True)
+    pool_id: int | None = Field(None, frozen=True)
     pool_name: str | None = None
     pool_read_only: bool | None = None     # if True, IPs in pool cannot be assigned
 

@@ -47,7 +47,7 @@ class IpAddress(SolidServerModel):
     # ------------------------------------------------------------------
     # Core identity
     # ------------------------------------------------------------------
-    ip_id: int = Field(frozen=True)
+    ip_id: int | None = Field(None, frozen=True)
     name: str | None = None
     ip_alias: str | None = Field(None, frozen=True)    # comma-separated aliases
 

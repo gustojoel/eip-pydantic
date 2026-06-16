@@ -3,6 +3,7 @@ from typing import Any, ClassVar, cast
 
 from pydantic import Field, model_validator
 
+from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
 
 
@@ -15,8 +16,7 @@ class Space(SolidServerModel):
 
     Mutable fields (writable via ``Session.flush()``):
         ``site_name``, ``site_description``, ``site_class_name``,
-        ``site_class_parameters``, ``site_class_parameters_properties``,
-        ``row_enabled``.
+        ``class_params``, ``row_enabled``.
 
     All other fields are frozen and reflect server-managed state.
     """
@@ -42,9 +42,8 @@ class Space(SolidServerModel):
     # Class system
     # ------------------------------------------------------------------
     site_class_name: str | None = None
-    site_class_parameters: str | None = None
-    site_class_parameters_properties: str | None = None
-    site_class_parameters_inheritance_source: str | None = Field(None, frozen=True)
+    class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)
+    parent_site_class_params: ClassParamDict | None = Field(None, frozen=True)  # _info only
 
     # ------------------------------------------------------------------
     # Hierarchy
@@ -52,8 +51,6 @@ class Space(SolidServerModel):
     parent_site_id: int | None = Field(None, frozen=True)
     parent_site_name: str | None = Field(None, frozen=True)
     parent_site_class_name: str | None = Field(None, frozen=True)
-    parent_site_class_parameters: str | None = Field(None, frozen=True)         # _info only
-    parent_site_class_parameters_properties: str | None = Field(None, frozen=True)  # _info only
     tree_level: int | None = Field(None, frozen=True)
     tree_path: str | None = Field(None, frozen=True)
     tree_id_path: str | None = Field(None, frozen=True)
@@ -87,19 +84,12 @@ class Space(SolidServerModel):
     # ------------------------------------------------------------------
 
     def write_params(self) -> dict[str, str]:
-        """Serialise dirty mutable fields to the wire format expected by ``ip_site_add``.
-
-        Iterates ``_dirty`` and converts each changed field to its string
-        representation.  ``row_enabled`` is serialised as its integer value;
-        all other fields use ``str()`` with an empty string for ``None``.
-
-        Returns:
-            Mapping of field name → wire-format string, ready to pass as query
-            parameters to a PUT or POST request.
-        """
-        out: dict[str, str] = {}
+        """Serialise dirty mutable fields to the wire format expected by ``ip_site_add``."""
+        out = super().write_params()   # handles class_params → site_class_parameters etc.
         for field in self._dirty:
             val = getattr(self, field)
+            if isinstance(val, ClassParamDict):
+                continue
             match field:
                 case "row_enabled":
                     out[field] = self._to_int_str(int(val) if val is not None else None)
@@ -109,12 +99,23 @@ class Space(SolidServerModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _coerce(cls, data: Any) -> Any:
+    def _coerce(cls, data: Any) -> Any:  # noqa: PLR0912
         if not isinstance(data, dict):
             return data
         v = cast(dict[str, Any], data)
+
+        _BLOB_KEYS = frozenset({  # noqa: N806
+            "site_class_parameters",
+            "site_class_parameters_properties",
+            "site_class_parameters_inheritance_source",
+            "parent_site_class_parameters",
+            "parent_site_class_parameters_properties",
+        })
+
         out: dict[str, Any] = {}
         for key, val in v.items():
+            if key in _BLOB_KEYS:
+                continue
             match key:
                 case "errno" | "site_id" | "tree_level" | "row_enabled":
                     out[key] = cls._as_int(val)
@@ -129,5 +130,26 @@ class Space(SolidServerModel):
                 case "trace_creation_date" | "trace_last_update_date":
                     out[key] = cls._as_datetime(val)
                 case _:
-                    out[key] = cls._as_str(val) if key in cls.model_fields else val
+                    if isinstance(val, ClassParamDict):
+                        out[key] = val
+                    elif key in cls.model_fields:
+                        out[key] = cls._as_str(val)
+                    else:
+                        out[key] = val
+
+        if not isinstance(out.get("class_params"), ClassParamDict):
+            out["class_params"] = ClassParamDict.from_blobs(
+                cls._as_str(v.get("site_class_parameters")),
+                cls._as_str(v.get("site_class_parameters_properties")),
+                cls._as_str(v.get("site_class_parameters_inheritance_source")),
+                api_prefix="site",
+            )
+        if "parent_site_class_parameters" in v or "parent_site_class_parameters_properties" in v:
+            out["parent_site_class_params"] = ClassParamDict.from_blobs(
+                cls._as_str(v.get("parent_site_class_parameters")),
+                cls._as_str(v.get("parent_site_class_parameters_properties")),
+                api_prefix="site",
+                frozen=True,
+            )
+
         return out

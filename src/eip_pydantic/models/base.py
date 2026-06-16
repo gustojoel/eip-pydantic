@@ -1,4 +1,5 @@
 import urllib.parse
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import IntEnum
 from ipaddress import IPv4Address
@@ -6,16 +7,26 @@ from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.expressions import ColumnCollection, ColumnExpr, Condition
 
+
+
+def _make_notifier(dirty: set[str], field_name: str) -> Callable[[], None]:
+    """Return a zero-arg callable that adds field_name to dirty when called."""
+    def _notify() -> None:
+        dirty.add(field_name)
+    return _notify
 
 
 class _CDescriptor:
     """Non-data descriptor returning a ``ColumnCollection`` bound to the accessing class."""
 
     def __get__(self, obj: object, objtype: "type[SolidServerModel] | None" = None) -> ColumnCollection:
-        if objtype is None:
+        if obj is not None:
             raise AttributeError("c must be accessed on the class, not an instance")  # pragma: no cover
+        if objtype is None:
+            raise AttributeError("objtype must be set")  # pragma: no cover
         return ColumnCollection(objtype)
 
 
@@ -48,9 +59,6 @@ class SolidServerModel(BaseModel):
     * **New-object lifecycle** — ``mark_new()`` flags an object as pending creation;
       ``finalize_creation()`` sets the server-assigned PK, clears the flag, and
       resets dirty tracking in one call.
-    * **Class-parameter helpers** — ``set_class_parameter()`` and
-      ``delete_class_parameter()`` let callers work with individual class-parameter
-      keys instead of manipulating the raw URL-encoded blob directly.
     """
 
     model_config = ConfigDict(
@@ -58,6 +66,7 @@ class SolidServerModel(BaseModel):
         str_strip_whitespace=True,
         extra="allow",
         validate_assignment=True,
+        arbitrary_types_allowed=True,
     )
 
     errno: int | None = Field(None, frozen=True)
@@ -83,9 +92,23 @@ class SolidServerModel(BaseModel):
         if name in type(self).model_fields:
             self._dirty.add(name)
 
+    def model_post_init(self, __context: Any, /) -> None:
+        """Wire dirty-notification callbacks for all non-frozen ClassParamDict fields."""
+        prefix = type(self)._class_param_prefix  # noqa: SLF001
+        for name in type(self).model_fields:
+            val = getattr(self, name)
+            if isinstance(val, ClassParamDict) and not val.frozen:
+                if not val.api_prefix and prefix is not None:
+                    val.api_prefix = prefix
+                val.wire_callback(_make_notifier(self._dirty, name))
+
     def mark_clean(self) -> None:
-        """Reset the dirty-field set, as if the object had just been loaded."""
+        """Reset dirty tracking state, as if the object had just been loaded."""
         self._dirty.clear()
+        for name in type(self).model_fields:
+            val = getattr(self, name)
+            if isinstance(val, ClassParamDict) and not val.frozen:
+                val.clear_pending_deletes()
 
     @property
     def is_dirty(self) -> bool:
@@ -167,58 +190,34 @@ class SolidServerModel(BaseModel):
         self._is_new = False
         self.mark_clean()
 
-    # ---- Class-parameter write helpers ---------------------------------------
-
-    def set_class_parameter(self, key: str, value: str) -> None:
-        """Set a single class parameter and mark the blob field as dirty.
-
-        Parses the existing ``*_class_parameters`` URL-encoded blob, sets the
-        given key, re-serialises, and assigns the result back — which triggers
-        dirty tracking so the change is flushed on the next ``Session.flush()``.
-
-        Args:
-            key: Class-parameter key name (e.g. ``"dns_id"``).
-            value: New string value for the key.
-
-        Raises:
-            TypeError: If this model has no ``_class_param_prefix`` set.
-        """
-        if (prefix := self._class_param_prefix) is None:
-            raise TypeError(f"{type(self).__name__} has no class parameter prefix")
-        params = dict(self.class_parameters)
-        params[key] = value
-        setattr(self, f"{prefix}_class_parameters", urllib.parse.urlencode(params))
-
-    def delete_class_parameter(self, key: str) -> None:
-        """Remove a single class parameter and mark the blob field as dirty.
-
-        If ``key`` is not present the operation is a no-op (the blob is still
-        re-assigned, so the field is marked dirty regardless).
-
-        Args:
-            key: Class-parameter key name to remove.
-
-        Raises:
-            TypeError: If this model has no ``_class_param_prefix`` set.
-        """
-        if (prefix := self._class_param_prefix) is None:
-            raise TypeError(f"{type(self).__name__} has no class parameter prefix")
-        params = dict(self.class_parameters)
-        params.pop(key, None)
-        setattr(self, f"{prefix}_class_parameters", urllib.parse.urlencode(params))
-
     # ---- Write serialisation (override in subclasses) -----------------------
 
     def write_params(self) -> dict[str, str]:
         """Serialise dirty mutable fields to wire-format query parameters.
 
-        Concrete models override this to provide model-specific serialisation.
-        The base implementation returns an empty dict.
+        Handles ``ClassParamDict`` fields by emitting the three wire blobs
+        (``*_class_parameters``, ``*_class_parameters_properties``, and
+        ``class_parameters_to_delete`` when keys have been deleted).
+        Concrete models call ``super().write_params()`` and then handle their
+        remaining non-ClassParamDict dirty fields.
 
         Returns:
-            Mapping of field name → wire-format string for all dirty fields.
+            Mapping of parameter name → wire-format string for all dirty fields.
         """
-        return {}
+        out: dict[str, str] = {}
+        for field in self._dirty:
+            val = getattr(self, field)
+            if isinstance(val, ClassParamDict):
+                prefix = val.api_prefix
+                if blob := val.to_params_blob():
+                    out[f"{prefix}_class_parameters"] = blob
+                if props := val.to_properties_blob():
+                    out[f"{prefix}_class_parameters_properties"] = props
+                if val.deleted:
+                    out["class_parameters_to_delete"] = urllib.parse.quote(
+                        "&".join(sorted(val.deleted)), safe="",
+                    )
+        return out
 
     # ---- HTTP request / response dispatch -----------------------------------
 
@@ -468,58 +467,6 @@ class SolidServerModel(BaseModel):
             return datetime.fromtimestamp(int(str(v)), tz=UTC)
         except (ValueError, OSError, TypeError):
             return None
-
-    # ---- Internal helpers ------------------------------------------------
-
-    def _raw_field(self, name: str) -> str | None:
-        """Return a string field value whether declared or in model_extra."""
-        val: Any = self.__dict__.get(name)
-        if val is None and self.model_extra:
-            val = self.model_extra.get(name)
-        return val if isinstance(val, str) else None
-
-    @staticmethod
-    def _parse_urlencoded(raw: str) -> list[tuple[str, str]]:
-        return urllib.parse.parse_qsl(raw, keep_blank_values=True)
-
-    # ---- Class-parameter properties --------------------------------------
-
-    @property
-    def class_parameters(self) -> dict[str, str]:
-        """Custom class parameters parsed from the API blob."""
-        if (prefix := self._class_param_prefix) is None:
-            return {}
-        raw = self._raw_field(f"{prefix}_class_parameters")
-        if not raw:
-            return {}
-        return dict(self._parse_urlencoded(raw))
-
-    @property
-    def class_parameters_properties(self) -> dict[str, tuple[str, ...]]:
-        """Inheritance/propagation properties per class parameter."""
-        if (prefix := self._class_param_prefix) is None:
-            return {}
-        raw = self._raw_field(f"{prefix}_class_parameters_properties")
-        if not raw:
-            return {}
-        return {
-            key: tuple(val.split(","))
-            for key, val in self._parse_urlencoded(raw)
-        }
-
-    @property
-    def class_parameters_inheritance_source(self) -> dict[str, tuple[str, str]]:
-        """Container each class parameter was inherited from."""
-        if (prefix := self._class_param_prefix) is None:
-            return {}
-        raw = self._raw_field(f"{prefix}_class_parameters_inheritance_source")
-        if not raw:
-            return {}
-        result: dict[str, tuple[str, str]] = {}
-        for key, val in self._parse_urlencoded(raw):
-            container_type, _, container_id = val.partition(",")
-            result[key] = (container_type, container_id)
-        return result
 
     @property
     def tagged_class_parameters(self) -> dict[str, str]:

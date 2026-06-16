@@ -5,9 +5,7 @@ import os
 from dotenv import load_dotenv
 
 from eip_pydantic import Session
-from eip_pydantic.models.base import SolidServerModel
-from eip_pydantic.models.space import Space
-from eip_pydantic.models.subnet import Subnet
+from eip_pydantic.models import *  # noqa: F403
 
 
 

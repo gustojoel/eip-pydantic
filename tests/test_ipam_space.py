@@ -140,40 +140,35 @@ def test_space_string_fields_preserved() -> None:
     assert s.tree_id_path == "#7#"
 
 
-def test_space_class_parameters_property() -> None:
+def test_space_class_params_values() -> None:
     s = Space.model_validate(_LIST_ROW)
-    assert s.class_parameters == {"dns_id": "0", "rev_dns_id": "0", "dns_update": "0"}
+    assert s.class_params["dns_id"] == "0"
+    assert s.class_params["rev_dns_id"] == "0"
+    assert s.class_params["dns_update"] == "0"
 
 
-def test_space_class_parameters_properties_property() -> None:
+def test_space_class_params_inheritance() -> None:
     s = Space.model_validate(_LIST_ROW)
-    assert s.class_parameters_properties == {
-        "dns_id": ("set", "propagate"),
-        "rev_dns_id": ("set", "propagate"),
-        "dns_update": ("set", "propagate"),
-    }
+    assert s.class_params.is_set("dns_id")
+    assert s.class_params.is_propagate("dns_id")
 
 
-def test_space_class_parameters_inheritance_source_property() -> None:
+def test_space_class_params_sources() -> None:
     s = Space.model_validate(_LIST_ROW)
-    assert s.class_parameters_inheritance_source == {
-        "dns_id": ("real_site", "7"),
-        "rev_dns_id": ("real_site", "7"),
-        "dns_update": ("real_site", "7"),
-    }
+    assert s.class_params.source("dns_id") == ("real_site", "7")
+    assert s.class_params.source("rev_dns_id") == ("real_site", "7")
 
 
-def test_space_info_only_fields_present() -> None:
+def test_space_parent_class_params_present_in_info() -> None:
     s = Space.model_validate(_INFO_ROW)
-    # These two fields only appear in ip_site_info; empty string → None
-    assert s.parent_site_class_parameters is None
-    assert s.parent_site_class_parameters_properties is None
+    # ip_site_info includes empty parent blobs → ClassParamDict with no keys
+    assert s.parent_site_class_params is not None
+    assert len(s.parent_site_class_params) == 0
 
 
-def test_space_info_only_fields_absent_in_list() -> None:
+def test_space_parent_class_params_absent_in_list() -> None:
     s = Space.model_validate(_LIST_ROW)
-    assert s.parent_site_class_parameters is None
-    assert s.parent_site_class_parameters_properties is None
+    assert s.parent_site_class_params is None
 
 
 def test_space_model_extra_tag_passthrough() -> None:
@@ -229,7 +224,7 @@ def test_space_info_returns_single_space() -> None:
         sp = s.get(Space, 7)
     assert isinstance(sp, Space)
     assert sp.site_id == 7
-    assert sp.parent_site_class_parameters is None
+    assert sp.parent_site_class_params is not None  # empty blob present in info response
 
 
 @respx.mock

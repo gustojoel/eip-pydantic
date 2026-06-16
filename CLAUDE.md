@@ -7,6 +7,7 @@ A typed Python SDK for the EfficientIP SolidServer REST API (v8.4). Uses httpx f
 ```
 src/eip_pydantic/
   __init__.py          — public exports: Session, AsyncSession, Space, Subnet, …
+  class_params.py      — ClassParamDict (dict-like container for class parameters)
   client.py            — _BaseEipClient, EipClient, AsyncEipClient (HTTP transport only)
   exceptions.py        — SolidServerError, ApiError, AuthenticationError, NotFoundError
   expressions.py       — Condition, OrderByExpr, ColumnExpr, ColumnCollection (WHERE/ORDERBY builder)
@@ -15,16 +16,20 @@ src/eip_pydantic/
     base.py            — SolidServerModel (Pydantic v2, extra="allow"), RowEnabled IntEnum
     space.py           — Space model (ip_site_list / ip_site_info)
     subnet.py          — Subnet model (ip_block_subnet_list / ip_block_subnet_info)
+    pool.py            — Pool model (ip_pool_list / ip_pool_info)
+    address.py         — IpAddress model (ip_address_list / ip_address_info)
     __init__.py        — re-exports: RowEnabled, SolidServerModel, Space, Subnet
 tests/
   test_client.py           — transport-layer smoke tests (respx mocking)
   test_expressions.py      — expression builder unit tests (no I/O)
   test_write.py            — write-layer + Session unit tests (respx mocking)
+  test_ipam_pool.py        — Pool model unit tests
+  test_ipam_address.py     — IpAddress model unit tests
   integration/
     conftest.py            — Session / AsyncSession fixtures (reads .env)
     test_ipam_subnet.py    — live integration tests via Session
 scripts/
-  inspect.py               — CLI inspection tool (raw JSON + parsed model + model_extra diff)
+  eip_inspect.py           — CLI inspection tool (parsed model + model_extra diff + ClassParamDict fields)
 ```
 
 ## Tooling
@@ -128,8 +133,9 @@ The Session dispatches based on the verb returned by `build_class_request` / `bu
   - `_as_dotted_ipv4(v)` — dotted-decimal (`"10.84.20.0"`) → `IPv4Address | None`
   - `_as_datetime(v)` — Unix epoch string → UTC `datetime`
 - Reverse-coercion statics (Python → wire): `_to_bool_str(v)`, `_to_int_str(v)`
-- Write-layer methods: `write_params()`, `build_class_request()`, `build_request()`, `parse_response()`, `apply_response()`, `mark_clean()`, `mark_new()`, `finalize_creation()`, `assign_pk()`, `set_class_parameter()`, `delete_class_parameter()`
-- Properties: `pk`, `is_dirty`, `is_new`, `class_parameters`, `class_parameters_properties`, `class_parameters_inheritance_source`, `tagged_class_parameters`
+- Write-layer methods: `write_params()`, `build_class_request()`, `build_request()`, `parse_response()`, `apply_response()`, `mark_clean()`, `mark_new()`, `finalize_creation()`, `assign_id()`
+- Properties: `id`, `id_filter`, `is_dirty`, `is_new`, `tagged_class_parameters`
+- Class parameters are stored as `ClassParamDict` fields on each model (e.g. `Space.class_params`, `Space.parent_site_class_params`); there are no separate `class_parameters` / `class_parameters_properties` / `class_parameters_inheritance_source` properties on `SolidServerModel`
 
 ### Per-model coercion pattern
 
@@ -214,26 +220,33 @@ Values are always coerced to `str` and single-quoted; internal `'` is escaped as
 ## Live API findings (ip_block_subnet_*)
 
 - `errno: "0"` is included in every row of `*_list` and `*_info` responses (not only mutation responses).
-- `ip_block_subnet_list` does **not** return `site_class_parameters`, `site_class_parameters_properties`, `parent_subnet_class_parameters`, or `parent_subnet_class_parameters_properties` — these are only present in `ip_block_subnet_info` responses. All four are declared `None`-defaulting fields on `Subnet` to handle both.
+- `ip_block_subnet_list` does **not** return `site_class_parameters`, `site_class_parameters_properties`, `parent_subnet_class_parameters`, or `parent_subnet_class_parameters_properties` — these are only present in `ip_block_subnet_info` responses. The `_coerce` validator on `Subnet` handles both: `site_class_params` and `parent_subnet_class_params` (`ClassParamDict | None`) default to an empty/missing dict when the blobs are absent.
 - `start_ip_addr` / `end_ip_addr` / `parent_start_ip_addr` / `parent_end_ip_addr` come back as 8-char hex strings; `start_hostaddr` / `end_hostaddr` come as dotted-decimal. `_as_ipv4` handles both formats.
 - FK-style ID fields (`parent_subnet_id`, `vlmdomain_id`, etc.) use `"0"` to mean "not set" — use `_as_nz_int` for these.
 - `subnet_level` uses `"0"` to mean "block type" (not "not set") — use plain `_as_int`.
 
-## `scripts/inspect.py`
+## `scripts/eip_inspect.py`
 
-Ad-hoc inspection tool. Reads credentials from `.env` (same as integration tests). Uses subcommands to select object type. Prints raw JSON, the parsed model, any `model_extra` keys (fields not yet declared in the model), and class_parameters.
+Ad-hoc inspection tool. Reads credentials from `.env` (same as integration tests). Uses subcommands to select object type. Prints the parsed model fields (excluding `ClassParamDict` entries), any `model_extra` keys (fields the API returns that our model doesn't declare yet), non-empty `ClassParamDict` fields by name, and `tagged_class_parameters`.
 
 ```
-poetry run python scripts/inspect.py subnet                     # first 3 subnets
-poetry run python scripts/inspect.py subnet 10.84.20.0/24       # lookup by CIDR
-poetry run python scripts/inspect.py subnet prod-dmz            # lookup by name substring
-poetry run python scripts/inspect.py subnet --limit 10          # first 10 subnets
+poetry run python scripts/eip_inspect.py subnet                     # first 3 subnets
+poetry run python scripts/eip_inspect.py subnet 10.84.20.0/24       # lookup by CIDR
+poetry run python scripts/eip_inspect.py subnet prod-dmz            # lookup by name substring
+poetry run python scripts/eip_inspect.py subnet --limit 10          # first 10 subnets
 
-poetry run python scripts/inspect.py space                      # first 3 spaces
-poetry run python scripts/inspect.py space prod                 # lookup by name substring
+poetry run python scripts/eip_inspect.py space                      # first 3 spaces
+poetry run python scripts/eip_inspect.py space prod                 # lookup by name substring
+
+poetry run python scripts/eip_inspect.py pool                       # first 3 pools
+poetry run python scripts/eip_inspect.py pool dhcp-range            # filter by pool name substring
+
+poetry run python scripts/eip_inspect.py address                    # first 3 addresses
+poetry run python scripts/eip_inspect.py address 10.84.20.5         # lookup by IP
+poetry run python scripts/eip_inspect.py address gateway            # filter by name substring
 ```
 
-The `subnet` subcommand also runs `ip_block_subnet_info` on the first result and cross-checks the key sets between list and info responses.
+Each subcommand also runs `*_info` on the first result and cross-checks the key sets between list and info responses, then prints a count.
 
 ---
 

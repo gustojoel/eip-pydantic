@@ -67,11 +67,11 @@ def test_subnet_info_has_ip_addresses(session: Session) -> None:
     assert info.end_hostaddr is not None, "end_hostaddr should be present"
 
 
-def test_subnet_class_parameters_parseable(session: Session) -> None:
+def test_subnet_class_params_parseable(session: Session) -> None:
     subnets = session.list(Subnet, limit=20)
+    from eip_pydantic import ClassParamDict
     for s in subnets:
-        cp = s.class_parameters
-        assert isinstance(cp, dict)
+        assert isinstance(s.class_params, ClassParamDict)
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Literal, cast
 
 from pydantic import Field, model_validator
 
+from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.exceptions import InternalError
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
 
@@ -197,12 +198,12 @@ class Subnet(SolidServerModel):
     subnet_ip_free_size: int | None = Field(None, frozen=True)
 
     # ------------------------------------------------------------------
-    # Class system (raw URL-encoded blobs, parsed via base-class properties)
+    # Class system
     # ------------------------------------------------------------------
     subnet_class_name: str | None = None
-    subnet_class_parameters: str | None = None
-    subnet_class_parameters_properties: str | None = None
-    subnet_class_parameters_inheritance_source: str | None = Field(None, frozen=True)
+    class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)
+    site_class_params: ClassParamDict | None = Field(None, frozen=True)
+    parent_subnet_class_params: ClassParamDict | None = Field(None, frozen=True)
 
     # ------------------------------------------------------------------
     # Containing space (frozen — linkage is read-only)
@@ -213,8 +214,6 @@ class Subnet(SolidServerModel):
     site_is_template: bool | None = Field(None, frozen=True)
     site_class_name: str | None = Field(None, frozen=True)
     site_parent_site_id: int | None = Field(None, frozen=True)
-    site_class_parameters: str | None = Field(None, frozen=True)
-    site_class_parameters_properties: str | None = Field(None, frozen=True)
     tree_level: int | None = Field(None, frozen=True)
     tree_path: str | None = Field(None, frozen=True)
     tree_id_path: str | None = Field(None, frozen=True)
@@ -230,8 +229,6 @@ class Subnet(SolidServerModel):
     parent_subnet_level: int | None = Field(None, frozen=True)
     parent_subnet_path: str | None = Field(None, frozen=True)
     parent_subnet_class_name: str | None = Field(None, frozen=True)
-    parent_subnet_class_parameters: str | None = Field(None, frozen=True)
-    parent_subnet_class_parameters_properties: str | None = Field(None, frozen=True)
     parent_is_terminal: bool | None = Field(None, frozen=True)
     parent_vlsm_subnet_id: int | None = Field(None, frozen=True)
     parent_site_id: int | None = Field(None, frozen=True)
@@ -273,20 +270,12 @@ class Subnet(SolidServerModel):
     # ------------------------------------------------------------------
 
     def write_params(self) -> dict[str, str]:
-        """Serialise dirty mutable fields to the wire format expected by ``ip_subnet_add``.
-
-        Boolean fields (``lock_network_broadcast``, ``is_terminal``,
-        ``is_in_orphan``) become ``"1"`` / ``"0"``.  ``row_enabled`` becomes
-        its integer string.  All other fields use ``str()`` with an empty string
-        for ``None``.
-
-        Returns:
-            Mapping of field name → wire-format string, ready to pass as query
-            parameters to a PUT or POST request.
-        """
-        out: dict[str, str] = {}
+        """Serialise dirty mutable fields to the wire format expected by ``ip_subnet_add``."""
+        out = super().write_params()   # handles class_params → subnet_class_parameters etc.
         for field in self._dirty:
             val = getattr(self, field)
+            if isinstance(val, ClassParamDict):
+                continue
             match field:
                 case "row_enabled":
                     out[field] = self._to_int_str(int(val) if val is not None else None)
@@ -330,12 +319,25 @@ class Subnet(SolidServerModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _coerce(cls, data: Any) -> Any:
+    def _coerce(cls, data: Any) -> Any:  # noqa: PLR0912
         if not isinstance(data, dict):
             return data
         v = cast(dict[str, Any], data)
+
+        _BLOB_KEYS = frozenset({  # noqa: N806
+            "subnet_class_parameters",
+            "subnet_class_parameters_properties",
+            "subnet_class_parameters_inheritance_source",
+            "site_class_parameters",
+            "site_class_parameters_properties",
+            "parent_subnet_class_parameters",
+            "parent_subnet_class_parameters_properties",
+        })
+
         out: dict[str, Any] = {}
         for key, val in v.items():
+            if key in _BLOB_KEYS:
+                continue
             match key:
                 case "start_ip_addr" | "end_ip_addr" | "parent_start_ip_addr" | "parent_end_ip_addr":
                     out[key] = cls._as_hex_ipv4(val)
@@ -371,5 +373,33 @@ class Subnet(SolidServerModel):
                 case "trace_creation_date" | "trace_last_update_date":
                     out[key] = cls._as_datetime(val)
                 case _:
-                    out[key] = cls._as_str(val) if key in cls.model_fields else val
+                    if isinstance(val, ClassParamDict):
+                        out[key] = val
+                    elif key in cls.model_fields:
+                        out[key] = cls._as_str(val)
+                    else:
+                        out[key] = val
+
+        if not isinstance(out.get("class_params"), ClassParamDict):
+            out["class_params"] = ClassParamDict.from_blobs(
+                cls._as_str(v.get("subnet_class_parameters")),
+                cls._as_str(v.get("subnet_class_parameters_properties")),
+                cls._as_str(v.get("subnet_class_parameters_inheritance_source")),
+                api_prefix="subnet",
+            )
+        if "site_class_parameters" in v or "site_class_parameters_properties" in v:
+            out["site_class_params"] = ClassParamDict.from_blobs(
+                cls._as_str(v.get("site_class_parameters")),
+                cls._as_str(v.get("site_class_parameters_properties")),
+                api_prefix="site",
+                frozen=True,
+            )
+        if "parent_subnet_class_parameters" in v or "parent_subnet_class_parameters_properties" in v:
+            out["parent_subnet_class_params"] = ClassParamDict.from_blobs(
+                cls._as_str(v.get("parent_subnet_class_parameters")),
+                cls._as_str(v.get("parent_subnet_class_parameters_properties")),
+                api_prefix="subnet",
+                frozen=True,
+            )
+
         return out

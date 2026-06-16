@@ -399,21 +399,22 @@ def test_subnet_string_fields_preserved() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_subnet_info_site_class_parameters_present() -> None:
+def test_subnet_info_site_class_params_present() -> None:
     s = Subnet.model_validate(_SUBNET_INFO_ROW)
-    assert s.site_class_parameters is not None
-    assert s.site_class_parameters.startswith("dns_id=")
+    assert s.site_class_params is not None
+    assert s.site_class_params["dns_id"] == "0"
 
 
-def test_subnet_info_parent_class_parameters_empty_string_to_none() -> None:
+def test_subnet_info_parent_class_params_empty_blob() -> None:
     s = Subnet.model_validate(_SUBNET_INFO_ROW)
-    assert s.parent_subnet_class_parameters is None  # "" → None
+    assert s.parent_subnet_class_params is not None
+    assert len(s.parent_subnet_class_params) == 0  # empty blob → no keys
 
 
 def test_subnet_list_row_has_no_info_only_fields() -> None:
     s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    assert s.site_class_parameters is None
-    assert s.parent_subnet_class_parameters is None
+    assert s.site_class_params is None
+    assert s.parent_subnet_class_params is None
 
 
 # ---------------------------------------------------------------------------
@@ -421,25 +422,22 @@ def test_subnet_list_row_has_no_info_only_fields() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_subnet_class_parameters_property() -> None:
+def test_subnet_class_params_values() -> None:
     s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    assert s.class_parameters == {"environment": "production", "owner": "ops"}
+    assert s.class_params["environment"] == "production"
+    assert s.class_params["owner"] == "ops"
 
 
-def test_subnet_class_parameters_properties_property() -> None:
+def test_subnet_class_params_inheritance() -> None:
     s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    assert s.class_parameters_properties == {
-        "environment": ("set", "propagate"),
-        "owner": ("set", "propagate"),
-    }
+    assert s.class_params.is_set("environment")
+    assert s.class_params.is_propagate("environment")
 
 
-def test_subnet_class_parameters_inheritance_source_property() -> None:
+def test_subnet_class_params_sources() -> None:
     s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    assert s.class_parameters_inheritance_source == {
-        "environment": ("real_site", "7"),
-        "owner": ("real_site", "7"),
-    }
+    assert s.class_params.source("environment") == ("real_site", "7")
+    assert s.class_params.source("owner") == ("real_site", "7")
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +491,7 @@ def test_subnet_info_returns_single_subnet() -> None:
         sn = s.get(Subnet, 42)
     assert isinstance(sn, Subnet)
     assert sn.subnet_id == 42
-    assert sn.site_class_parameters is not None
+    assert sn.site_class_params is not None
 
 
 @respx.mock

@@ -18,6 +18,9 @@ src/eip_pydantic/
     subnet.py          — Subnet model (ip_block_subnet_list / ip_block_subnet_info)
     pool.py            — Pool model (ip_pool_list / ip_pool_info)
     address.py         — IpAddress model (ip_address_list / ip_address_info)
+    vlan_domain.py     — VlanDomain model (vlmdomain_list / vlmdomain_info)
+    vlan_range.py      — VlanRange model (vlmrange_list / vlmrange_info)
+    vlan.py            — Vlan model (vlmvlan_list / vlmvlan_info)
     __init__.py        — re-exports: RowEnabled, SolidServerModel, Space, Subnet
 tests/
   test_client.py           — transport-layer smoke tests (respx mocking)
@@ -25,6 +28,9 @@ tests/
   test_write.py            — write-layer + Session unit tests (respx mocking)
   test_ipam_pool.py        — Pool model unit tests
   test_ipam_address.py     — IpAddress model unit tests
+  test_vlan_domain.py      — VlanDomain model unit tests
+  test_vlan_range.py       — VlanRange model unit tests
+  test_vlan.py             — Vlan model unit tests
   integration/
     conftest.py            — Session / AsyncSession fixtures (reads .env)
     test_ipam_subnet.py    — live integration tests via Session
@@ -419,6 +425,7 @@ Aggregation functions: `count`, `max`, `min`, `sum`, `avg`. Use `count(*)` to co
 | Device Manager  | Port/Interface       | `hostiface`    |
 | VLAN Manager    | Domain               | `vlmdomain`    |
 | VLAN Manager    | Range                | `vlmrange`     |
+| VLAN Manager    | VLAN                 | `vlmvlan`      |
 | VRF             | VRF                  | `vrfobject`    |
 | Administration  | Group of users       | `grp`          |
 | Administration  | User                 | `usr`          |
@@ -475,6 +482,24 @@ DNS zones and views have `*_param_add/list/info/count/delete` sub-services for B
 | XI   | Device Manager           | `hostdev_*`, `hostiface_*`, `link_hostiface_*` |
 | XII  | VLAN Manager             | `vlm_*`, `vlmdomain*`, `vlmrange*`, `vlmvlan*` |
 | XIII | VRF                      | `vrf_*`, `vrfobject*`, `link_vrfimportexport*` |
+
+### Part XII — VLAN Manager (Chapters 64–66)
+
+Hierarchy: **VlanDomain** → **VlanRange** → **Vlan**
+
+| Chapter | Object      | Key services                              | Model        |
+|---------|-------------|-------------------------------------------|--------------|
+| 64      | Domain      | `vlm_domain_add`, `vlmdomain_list/info/count/delete` | `VlanDomain` |
+| 65      | Range       | `vlm_range_add`, `vlmrange_list/info/count/delete`   | `VlanRange`  |
+| 66      | VLAN        | `vlm_vlan_add`, `vlmvlan_list/info/count/delete`     | `Vlan`       |
+
+Notable VLAN Manager quirks:
+- **Add verb vs list prefix**: creation uses `vlm_domain_add` / `vlm_range_add` / `vlm_vlan_add` (underscore after `vlm`), but list/info/count/delete use `vlmdomain_*` / `vlmrange_*` / `vlmvlan_*` (no underscore).
+- **`support_vxlan`** on `VlanDomain`: `"Can be edited: No"` — frozen after creation; serialised as `"1"`/`"0"` via `_to_bool_str` for new objects.
+- **`vlmvlan_vlan_id` alias**: the Pydantic field is `vlan_id` (Python name) with `alias="vlmvlan_vlan_id"` (wire name). A `vlmvlan_vlan_id` property provides backward-compatible access. `write_params()` uses the alias when serialising.
+- **`type` field on `Vlan`**: `"used"` for assigned VLANs, `"free"` for unassigned spans (which carry `free_start_vlan_id` / `free_end_vlan_id` instead of a VLAN name).
+- **`vlmrange_id` in Vlan**: uses `_as_nz_int` — `"0"` means the VLAN is not inside a range.
+- **`vlmrange_row_enabled`** on `Vlan`: present in API output but not in API documentation; stored as `str | None`.
 | XIV  | Administration           | `service_*`, `group_*`, `user_*`, `custom_db_data_*`, `config_*` |
 
 ---

@@ -15,6 +15,7 @@ from eip_pydantic.expressions import ColumnCollection, ColumnExpr, Condition
 
 
 _EMPTY_PATHS: MappingProxyType[str, str] = MappingProxyType({})
+_MISSING = object()
 
 
 class SolidServerConfig(NamedTuple):
@@ -108,9 +109,16 @@ class SolidServerModel(BaseModel):
     # ---- Dirty tracking ------------------------------------------------------
 
     def __setattr__(self, name: str, value: object) -> None:
+        if name not in type(self).model_fields:
+            super().__setattr__(name, value)
+            return
+
+        previous = getattr(self, name, _MISSING)
         super().__setattr__(name, value)   # raises ValidationError for frozen fields
-        if name in type(self).model_fields:
-            self._dirty.add(name)
+        # Skip dirty tracking for initial field population and no-op assignments.
+        if previous is _MISSING or previous == getattr(self, name):
+            return
+        self._dirty.add(name)
 
     def model_post_init(self, __context: Any, /) -> None:
         """Wire dirty-notification callbacks for all non-frozen ClassParamDict fields."""
@@ -247,7 +255,7 @@ class SolidServerModel(BaseModel):
     # ---- HTTP request / response dispatch -----------------------------------
 
     @classmethod
-    def build_class_request(  # noqa: PLR0912
+    def build_class_request(
         cls,
         operation: str,
         **kwargs: Any,

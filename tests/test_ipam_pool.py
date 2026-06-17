@@ -282,6 +282,12 @@ def test_pool_coerce_non_dict_passthrough() -> None:
     assert Pool._coerce(sentinel) is sentinel
 
 
+def test_pool_unknown_extra_is_preserved() -> None:
+    p = Pool.model_validate({**_LIST_ROW, "custom_marker": "keep-me"})
+    assert p.model_extra is not None
+    assert p.model_extra["custom_marker"] == "keep-me"
+
+
 # ---------------------------------------------------------------------------
 # write_params / dirty tracking
 # ---------------------------------------------------------------------------
@@ -301,6 +307,7 @@ def test_pool_write_params_pool_read_only_true() -> None:
 
 def test_pool_write_params_pool_read_only_false() -> None:
     p = Pool.model_validate(_LIST_ROW)
+    p.pool_read_only = True
     p.pool_read_only = False
     assert p.write_params() == {"pool_read_only": "0"}
 
@@ -324,6 +331,12 @@ def test_pool_write_params_none_value_becomes_empty_string() -> None:
     p = Pool.model_validate(_LIST_ROW)
     p.pool_class_name = None
     assert p.write_params() == {"pool_class_name": ""}
+
+
+def test_pool_write_params_ignores_address_range_fields_when_dirty_manually() -> None:
+    p = Pool.model_validate(_LIST_ROW)
+    p._dirty.update({"start_ip_addr", "end_ip_addr", "pool_size"})
+    assert p.write_params() == {}
 
 
 def test_pool_not_dirty_initially() -> None:

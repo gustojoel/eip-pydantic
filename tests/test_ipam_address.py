@@ -465,6 +465,14 @@ def test_address_write_params_multiple_fields() -> None:
     assert result["mac_addr"] == "de:ad:be:ef:00:01"
 
 
+def test_address_write_params_class_params_only() -> None:
+    a = IpAddress.model_validate(_LIST_ROW)
+    a.class_params["ticket"] = "INC001"
+    result = a.write_params()
+    assert "ip_class_parameters" in result
+    assert "class_params" not in result
+
+
 def test_address_write_params_none_becomes_empty_string() -> None:
     a = IpAddress.model_validate(_LIST_ROW)
     a.name = None

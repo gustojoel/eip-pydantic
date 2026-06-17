@@ -29,9 +29,12 @@ import pytest
 from pydantic import ValidationError
 
 from eip_pydantic import Session
+from eip_pydantic.exceptions import ApiError
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
 from tests.integration.conftest import open_session
+
+_SKIP_SPACE_WRITE = "Space write operations require 'ip_site_add' permission (not yet granted)"
 
 
 # ---------------------------------------------------------------------------
@@ -66,21 +69,28 @@ def _nested_child_24s(base: IPv4Network) -> list[IPv4Network]:
 
 
 # ---------------------------------------------------------------------------
-# Space-tree teardown helper
+# Space teardown helpers
 # ---------------------------------------------------------------------------
 
-def _delete_space_tree(s: Session, space: Space) -> None:
-    """Recursively delete all subnets and child spaces, then delete *space* itself.
+def _delete_space_by_name(s: Session, site_name: str) -> None:
+    """Find a space by name, delete its subnets, then delete it.
 
-    Required before deleting a non-empty Space: the server rejects deletion of
-    a Space that still contains subnets or child spaces.
+    Does nothing if no space with that name exists.  Does NOT recurse into
+    child spaces — callers must delete descendants by name (deepest first)
+    before calling this on an ancestor, because the server rejects deletion of
+    a Space that still has child spaces (errno 5066).
+
+    Filtering child spaces by parent_site_id via ip_site_list WHERE is not
+    reliable on all SolidServer versions, so we avoid that approach.
     """
-    assert space.site_id is not None
-    for sn in s.list(Subnet, where=Subnet.c.site_id == space.site_id, limit=1000):
+    spaces = s.list(Space, where=Space.c.site_name == site_name, limit=1)
+    if not spaces:
+        return
+    sp = spaces[0]
+    assert sp.site_id is not None
+    for sn in s.list(Subnet, where=Subnet.c.site_id == sp.site_id, limit=1000):
         s.delete(sn)
-    for child in s.list(Space, where=Space.c.parent_site_id == space.site_id, limit=100):
-        _delete_space_tree(s, child)
-    s.delete(space)
+    s.delete(sp)
 
 
 # ---------------------------------------------------------------------------
@@ -91,21 +101,25 @@ def _delete_space_tree(s: Session, space: Space) -> None:
 def nested_space(test_site_id: int) -> Space:
     """Depth-1 Space under test_site_id.
 
-    Any existing instance (including its subnets and descendant spaces) is
-    deleted before a fresh copy is created.
+    Skipped if the API user lacks 'ip_site_add' permission.  Descendants are
+    deleted deepest-first before this space is deleted and re-created, because
+    the server rejects deletion of a non-empty parent Space (errno 5066).
     """
     s = open_session()
     try:
-        existing = s.list(Space, where=Space.c.site_name == _SPACE_CHILD_NAME, limit=1)
-        if existing:
-            _delete_space_tree(s, existing[0])
-        sp = s.create(
-            Space,
-            site_name=_SPACE_CHILD_NAME,
-            site_description=_SPACE_DESC_ORIGINAL,
-            parent_site_id=test_site_id,
-        )
-        s.flush()
+        try:
+            _delete_space_by_name(s, _SPACE_DEEPER_NAME)
+            _delete_space_by_name(s, _SPACE_DEEP_NAME)
+            _delete_space_by_name(s, _SPACE_CHILD_NAME)
+            sp = s.create(
+                Space,
+                site_name=_SPACE_CHILD_NAME,
+                site_description=_SPACE_DESC_ORIGINAL,
+                parent_site_id=test_site_id,
+            )
+            s.flush()
+        except ApiError as exc:
+            pytest.skip(f"{_SKIP_SPACE_WRITE}: {exc}")
     finally:
         s._client.close()
     return sp
@@ -115,21 +129,22 @@ def nested_space(test_site_id: int) -> Space:
 def deep_space(nested_space: Space) -> Space:
     """Depth-2 Space nested under ``nested_space``.
 
-    Any existing instance is deleted before a fresh copy is created.
-    (``nested_space``'s own fixture already deleted it as part of its tree
-    teardown, but we repeat the search for safety on partial runs.)
+    ``nested_space``'s fixture already deleted this as part of its teardown,
+    but we re-check for safety on partial runs.
     """
     s = open_session()
     try:
-        existing = s.list(Space, where=Space.c.site_name == _SPACE_DEEP_NAME, limit=1)
-        if existing:
-            _delete_space_tree(s, existing[0])
-        sp = s.create(
-            Space,
-            site_name=_SPACE_DEEP_NAME,
-            parent_site_id=nested_space.site_id,
-        )
-        s.flush()
+        try:
+            _delete_space_by_name(s, _SPACE_DEEPER_NAME)
+            _delete_space_by_name(s, _SPACE_DEEP_NAME)
+            sp = s.create(
+                Space,
+                site_name=_SPACE_DEEP_NAME,
+                parent_site_id=nested_space.site_id,
+            )
+            s.flush()
+        except ApiError as exc:
+            pytest.skip(f"{_SKIP_SPACE_WRITE}: {exc}")
     finally:
         s._client.close()
     return sp
@@ -137,21 +152,19 @@ def deep_space(nested_space: Space) -> Space:
 
 @pytest.fixture(scope="session")
 def deeper_space(deep_space: Space) -> Space:
-    """Depth-3 Space nested under ``deep_space``.
-
-    Any existing instance is deleted before a fresh copy is created.
-    """
+    """Depth-3 Space nested under ``deep_space``."""
     s = open_session()
     try:
-        existing = s.list(Space, where=Space.c.site_name == _SPACE_DEEPER_NAME, limit=1)
-        if existing:
-            _delete_space_tree(s, existing[0])
-        sp = s.create(
-            Space,
-            site_name=_SPACE_DEEPER_NAME,
-            parent_site_id=deep_space.site_id,
-        )
-        s.flush()
+        try:
+            _delete_space_by_name(s, _SPACE_DEEPER_NAME)
+            sp = s.create(
+                Space,
+                site_name=_SPACE_DEEPER_NAME,
+                parent_site_id=deep_space.site_id,
+            )
+            s.flush()
+        except ApiError as exc:
+            pytest.skip(f"{_SKIP_SPACE_WRITE}: {exc}")
     finally:
         s._client.close()
     return sp

@@ -73,6 +73,13 @@ def test_setting_mutable_field_marks_dirty() -> None:
     assert "subnet_name" in sn._dirty
 
 
+def test_setting_same_value_does_not_mark_dirty() -> None:
+    sn = Subnet.model_validate(_SUBNET_ROW)
+    sn.subnet_name = "test-net"
+    assert not sn.is_dirty
+    assert "subnet_name" not in sn._dirty
+
+
 def test_mark_clean_clears_dirty() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
     sn.subnet_name = "renamed"
@@ -92,6 +99,18 @@ def test_space_mutable_field_marks_dirty() -> None:
     sp.site_description = "updated"
     assert sp.is_dirty
     assert "site_description" in sp._dirty
+
+
+def test_new_object_sets_class_param_prefix_in_post_init() -> None:
+    sp = Space(site_name="new-space")
+    assert sp.class_params.api_prefix == "site"
+
+
+def test_write_params_emits_class_parameters_to_delete() -> None:
+    sp = Space.model_validate(_SPACE_ROW)
+    sp.class_params.delete("dns_id")
+    params = sp.write_params()
+    assert params["class_parameters_to_delete"] == "dns_id"
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +162,11 @@ def test_mutable_subnet_name_does_not_raise() -> None:
 def test_mutable_space_name_does_not_raise() -> None:
     sp = Space.model_validate(_SPACE_ROW)
     sp.site_name = "ok"
+
+
+def test_subnet_prefix_property() -> None:
+    sn = Subnet.model_validate(_SUBNET_ROW)
+    assert sn.subnet_prefix == 24
 
 
 # ---------------------------------------------------------------------------
@@ -220,12 +244,14 @@ def test_write_params_bool_true() -> None:
 
 def test_write_params_bool_false() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
+    sn.lock_network_broadcast = True
     sn.lock_network_broadcast = False
     assert sn.write_params() == {"lock_network_broadcast": "0"}
 
 
 def test_write_params_none_becomes_empty_string() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
+    sn.subnet_class_name = "custom"
     sn.subnet_class_name = None
     assert sn.write_params() == {"subnet_class_name": ""}
 
@@ -357,6 +383,12 @@ def test_build_request_create_subnet_with_site_name_only() -> None:
 def test_build_request_create_subnet_no_identifier_raises() -> None:
     sn = Subnet(subnet_name="test-net", subnet=IPv4Network("10.0.0.0/24"))
     with pytest.raises(ValueError, match="site_id"):
+        sn.build_request("create")
+
+
+def test_build_request_create_subnet_no_subnet_raises() -> None:
+    sn = Subnet(subnet_name="test-net", site_id=7)
+    with pytest.raises(ValueError, match="subnet address"):
         sn.build_request("create")
 
 
@@ -864,6 +896,94 @@ async def test_async_session_flush_create_sends_post() -> None:
         sp.site_name = "brand-new"
     assert route.called
     assert sp.site_id == 42
+
+
+def test_session_flush_create_records_failure_and_raises() -> None:
+    s = Session(HOST, *CREDS)
+    try:
+        sp = Space(site_name="new-space")
+        s.new(sp)
+
+        def _failing_dispatch(verb: str, path: str, params: dict[str, str]) -> object:  # noqa: ARG001
+            raise RuntimeError("create failed")
+
+        s._dispatch = _failing_dispatch  # type: ignore[assignment]
+
+        with pytest.raises(RuntimeError, match="create failed"):
+            s.flush()
+
+        assert len(s.last_flush) == 1
+        assert s.last_flush[0].verb == "POST"
+        assert isinstance(s.last_flush[0].error, RuntimeError)
+    finally:
+        s._client.close()
+
+
+def test_session_flush_update_records_failure_and_raises() -> None:
+    s = Session(HOST, *CREDS)
+    try:
+        sp = Space.model_validate(_SPACE_ROW)
+        s._put_cache(sp)
+        sp.site_name = "mutated"
+
+        def _failing_dispatch(verb: str, path: str, params: dict[str, str]) -> object:  # noqa: ARG001
+            raise RuntimeError("update failed")
+
+        s._dispatch = _failing_dispatch  # type: ignore[assignment]
+
+        with pytest.raises(RuntimeError, match="update failed"):
+            s.flush()
+
+        assert len(s.last_flush) == 1
+        assert s.last_flush[0].verb == "PUT"
+        assert isinstance(s.last_flush[0].error, RuntimeError)
+    finally:
+        s._client.close()
+
+
+@respx.mock
+async def test_async_session_flush_create_records_failure_and_raises() -> None:
+    s = AsyncSession(HOST, *CREDS)
+    try:
+        sp = Space(site_name="new-space")
+        s.new(sp)
+
+        async def _failing_dispatch(verb: str, path: str, params: dict[str, str]) -> object:  # noqa: ARG001
+            raise RuntimeError("async create failed")
+
+        s._dispatch = _failing_dispatch  # type: ignore[assignment]
+
+        with pytest.raises(RuntimeError, match="async create failed"):
+            await s.flush()
+
+        assert len(s.last_flush) == 1
+        assert s.last_flush[0].verb == "POST"
+        assert isinstance(s.last_flush[0].error, RuntimeError)
+    finally:
+        await s._client.aclose()
+
+
+@respx.mock
+async def test_async_session_flush_update_records_failure_and_raises() -> None:
+    s = AsyncSession(HOST, *CREDS)
+    try:
+        sp = Space.model_validate(_SPACE_ROW)
+        s._put_cache(sp)
+        sp.site_name = "mutated"
+
+        async def _failing_dispatch(verb: str, path: str, params: dict[str, str]) -> object:  # noqa: ARG001
+            raise RuntimeError("async update failed")
+
+        s._dispatch = _failing_dispatch  # type: ignore[assignment]
+
+        with pytest.raises(RuntimeError, match="async update failed"):
+            await s.flush()
+
+        assert len(s.last_flush) == 1
+        assert s.last_flush[0].verb == "PUT"
+        assert isinstance(s.last_flush[0].error, RuntimeError)
+    finally:
+        await s._client.aclose()
 
 
 @respx.mock

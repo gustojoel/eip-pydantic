@@ -226,7 +226,7 @@ class IpAddress(SolidServerModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _coerce(cls, data: Any) -> Any:  # noqa: PLR0912
+    def _coerce(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
         v = cast(dict[str, Any], data)

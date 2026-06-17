@@ -161,7 +161,7 @@ class ColumnExpr:
     - ``Model.c.field.is_null()`` → ``f=''``
     - ``Model.c.field.asc()`` → ``f ASC``
     - ``Model.c.field.desc()`` → ``f DESC``
-"""
+    """
 
     def __init__(self, field_name: str, required_tags: frozenset[str] = frozenset()) -> None:
         self._field_name = field_name

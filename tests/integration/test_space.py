@@ -1,26 +1,24 @@
 """Live integration tests for Space reads and Subnet writes inside nested Spaces.
 
-Space write tests (creation, description/name updates) require the API user to
-have 'Add/modify a space' rights (ip_site_add).  If the server returns HTTP 400
-errno=6, those tests are skipped automatically — re-run after the ACL is fixed.
-
-Subnet creation/mutation inside nested spaces works regardless.
-
-Objects created here are NOT deleted at teardown.  Fixtures are idempotent.
+All nested Spaces are created under TEST_SITE_ID.  Each session-scoped Space
+fixture tears down any previous instance (recursively deleting child spaces and
+their subnets) before creating a fresh one, so every run exercises the full
+delete → create cycle.
 
 Hierarchy targeted:
     TEST_SITE_ID  (pre-existing root space, default 24)
-      pytest-space-child-a   (nested Space, created by fixture if permitted)
-        pytest-nested-block  (/16 block, subnet_level=0)
+      pytest-space-child-a    (nested Space, depth 1)
+        pytest-space-deep-b   (nested Space, depth 2)
+          pytest-space-deeper-c  (nested Space, depth 3)
+        pytest-nested-block   (/16 block, subnet_level=0)
           pytest-nested-child-14  (/24 child)
 
 Subnet range uses the *second* /16 of TEST_IP_NETWORK (100.65.0.0/16 by
 default) so it never overlaps with test_write.py (which uses the first /16).
 
 Configure via .env:
-    TEST_SITE_ID            (default 24)
-    TEST_NESTED_SITE_ID     (default 25)  — pre-existing nested space fallback
-    TEST_IP_NETWORK         (default 100.64.0.0/10)
+    TEST_SITE_ID     (default 24)
+    TEST_IP_NETWORK  (default 100.64.0.0/10)
 """
 
 from __future__ import annotations
@@ -31,7 +29,6 @@ import pytest
 from pydantic import ValidationError
 
 from eip_pydantic import Session
-from eip_pydantic.exceptions import ApiError
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
 from tests.integration.conftest import open_session
@@ -42,6 +39,8 @@ from tests.integration.conftest import open_session
 # ---------------------------------------------------------------------------
 
 _SPACE_CHILD_NAME    = "pytest-space-child-a"
+_SPACE_DEEP_NAME     = "pytest-space-deep-b"      # grandchild of root (depth 2)
+_SPACE_DEEPER_NAME   = "pytest-space-deeper-c"    # great-grandchild of root (depth 3)
 _SPACE_DESC_ORIGINAL = "pytest child space"
 _SPACE_DESC_UPDATED  = "pytest child space (updated)"
 _NESTED_BLOCK_NAME   = "pytest-nested-block"
@@ -67,51 +66,112 @@ def _nested_child_24s(base: IPv4Network) -> list[IPv4Network]:
 
 
 # ---------------------------------------------------------------------------
+# Space-tree teardown helper
+# ---------------------------------------------------------------------------
+
+def _delete_space_tree(s: Session, space: Space) -> None:
+    """Recursively delete all subnets and child spaces, then delete *space* itself.
+
+    Required before deleting a non-empty Space: the server rejects deletion of
+    a Space that still contains subnets or child spaces.
+    """
+    assert space.site_id is not None
+    for sn in s.list(Subnet, where=Subnet.c.site_id == space.site_id, limit=1000):
+        s.delete(sn)
+    for child in s.list(Space, where=Space.c.parent_site_id == space.site_id, limit=100):
+        _delete_space_tree(s, child)
+    s.delete(space)
+
+
+# ---------------------------------------------------------------------------
 # Session-scoped fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def nested_space(test_site_id: int) -> Space:
-    """Nested Space under test_site_id.
+    """Depth-1 Space under test_site_id.
 
-    Uses search-or-create: if the space already exists it is returned directly
-    (Space uses new_only semantics so we must not POST a duplicate).
-
-    Skipped if the API user lacks 'Add/modify a space' rights (errno=6).
+    Any existing instance (including its subnets and descendant spaces) is
+    deleted before a fresh copy is created.
     """
     s = open_session()
     try:
         existing = s.list(Space, where=Space.c.site_name == _SPACE_CHILD_NAME, limit=1)
         if existing:
-            return existing[0]
-        try:
-            sp = s.create(
-                Space,
-                site_name=_SPACE_CHILD_NAME,
-                site_description=_SPACE_DESC_ORIGINAL,
-                parent_site_id=test_site_id,
-            )
-            s.flush()
-        except ApiError as exc:
-            pytest.skip(f"Space creation requires elevated permissions: {exc}")
+            _delete_space_tree(s, existing[0])
+        sp = s.create(
+            Space,
+            site_name=_SPACE_CHILD_NAME,
+            site_description=_SPACE_DESC_ORIGINAL,
+            parent_site_id=test_site_id,
+        )
+        s.flush()
     finally:
         s._client.close()
     return sp
 
 
 @pytest.fixture(scope="session")
-def nested_block(test_nested_site_id: int, test_network: IPv4Network) -> Subnet:
-    """Block subnet (level=0) inside the pre-existing nested space.
+def deep_space(nested_space: Space) -> Space:
+    """Depth-2 Space nested under ``nested_space``.
 
-    Uses test_nested_site_id (env var TEST_NESTED_SITE_ID, default 25) so
-    subnet tests run even when Space creation is permission-blocked.
+    Any existing instance is deleted before a fresh copy is created.
+    (``nested_space``'s own fixture already deleted it as part of its tree
+    teardown, but we repeat the search for safety on partial runs.)
+    """
+    s = open_session()
+    try:
+        existing = s.list(Space, where=Space.c.site_name == _SPACE_DEEP_NAME, limit=1)
+        if existing:
+            _delete_space_tree(s, existing[0])
+        sp = s.create(
+            Space,
+            site_name=_SPACE_DEEP_NAME,
+            parent_site_id=nested_space.site_id,
+        )
+        s.flush()
+    finally:
+        s._client.close()
+    return sp
+
+
+@pytest.fixture(scope="session")
+def deeper_space(deep_space: Space) -> Space:
+    """Depth-3 Space nested under ``deep_space``.
+
+    Any existing instance is deleted before a fresh copy is created.
+    """
+    s = open_session()
+    try:
+        existing = s.list(Space, where=Space.c.site_name == _SPACE_DEEPER_NAME, limit=1)
+        if existing:
+            _delete_space_tree(s, existing[0])
+        sp = s.create(
+            Space,
+            site_name=_SPACE_DEEPER_NAME,
+            parent_site_id=deep_space.site_id,
+        )
+        s.flush()
+    finally:
+        s._client.close()
+    return sp
+
+
+@pytest.fixture(scope="session")
+def nested_block(nested_space: Space, test_network: IPv4Network) -> Subnet:
+    """Block subnet (level=0) inside ``nested_space``.
+
+    Any leftover from a prior run is deleted before a fresh copy is created.
     """
     block_net = _nested_block_net(test_network)
     s = open_session()
     try:
+        for existing in s.list(Subnet, where=Subnet.c.subnet_name == _NESTED_BLOCK_NAME, limit=10):
+            s.delete(existing)
+        assert nested_space.site_id is not None
         sn = s.create(
             Subnet,
-            site_id=test_nested_site_id,
+            site_id=nested_space.site_id,
             subnet=block_net,
             subnet_name=_NESTED_BLOCK_NAME,
             subnet_level=0,
@@ -124,11 +184,16 @@ def nested_block(test_nested_site_id: int, test_network: IPv4Network) -> Subnet:
 
 @pytest.fixture(scope="session")
 def nested_child(nested_block: Subnet, test_network: IPv4Network) -> Subnet:
-    """/24 child subnet inside the nested block."""
+    """/24 child subnet inside the nested block.
+
+    Any leftover from a prior run is deleted before a fresh copy is created.
+    """
     net = _nested_child_24s(test_network)[_IDX_NESTED_CHILD]
     assert nested_block.subnet_id is not None
     s = open_session()
     try:
+        for existing in s.list(Subnet, where=Subnet.c.subnet_name == _NESTED_CHILD_NAME, limit=10):
+            s.delete(existing)
         sn = s.create(
             Subnet,
             site_id=nested_block.site_id,
@@ -169,12 +234,13 @@ def test_space_get_root(session: Session, test_site_id: int) -> None:
 
 def test_space_get_nested(
     session: Session,
-    test_nested_site_id: int,
+    nested_space: Space,
     test_site_id: int,
 ) -> None:
     """get() fetches the nested space; parent_site_id resolves to root."""
-    sp = session.get(Space, test_nested_site_id)
-    assert sp.site_id == test_nested_site_id
+    assert nested_space.site_id is not None
+    sp = session.get(Space, nested_space.site_id)
+    assert sp.site_id == nested_space.site_id
     assert sp.parent_site_id == test_site_id
     assert sp.tree_level is not None and sp.tree_level >= 1
 
@@ -185,34 +251,38 @@ def test_space_list_expression_where(session: Session, test_site_id: int) -> Non
     assert any(s.site_id == test_site_id for s in results)
 
 
-def test_space_id_filter(session: Session, test_nested_site_id: int) -> None:
+def test_space_id_filter(session: Session, nested_space: Space) -> None:
     """.id_filter generates a valid WHERE clause for Space."""
-    sp = session.get(Space, test_nested_site_id)
+    assert nested_space.site_id is not None
+    sp = session.get(Space, nested_space.site_id)
     results = session.list(Space, where=sp.id_filter)
     assert len(results) == 1
-    assert results[0].site_id == test_nested_site_id
+    assert results[0].site_id == nested_space.site_id
 
 
-def test_space_count_where(session: Session, test_nested_site_id: int) -> None:
+def test_space_count_where(session: Session, nested_space: Space) -> None:
     """count() with WHERE filters Space correctly."""
-    assert session.count(Space, where=Space.c.site_id == test_nested_site_id) == 1
+    assert nested_space.site_id is not None
+    assert session.count(Space, where=Space.c.site_id == nested_space.site_id) == 1
 
 
 def test_space_tree_path_contains_parent_name(
     session: Session,
-    test_nested_site_id: int,
+    nested_space: Space,
 ) -> None:
     """tree_path for the nested space contains the parent space name."""
-    sp = session.get(Space, test_nested_site_id)
+    assert nested_space.site_id is not None
+    sp = session.get(Space, nested_space.site_id)
     assert sp.tree_path is not None
     parent = session.get(Space, sp.parent_site_id)  # type: ignore[arg-type]
     assert parent.site_name is not None
     assert parent.site_name in sp.tree_path
 
 
-def test_space_row_enabled_set(session: Session, test_nested_site_id: int) -> None:
+def test_space_row_enabled_set(session: Session, nested_space: Space) -> None:
     """row_enabled is populated on nested spaces."""
-    sp = session.get(Space, test_nested_site_id)
+    assert nested_space.site_id is not None
+    sp = session.get(Space, nested_space.site_id)
     assert sp.row_enabled is not None
 
 
@@ -220,25 +290,27 @@ def test_space_row_enabled_set(session: Session, test_nested_site_id: int) -> No
 # Space — frozen-field enforcement
 # ---------------------------------------------------------------------------
 
-def test_space_site_id_is_frozen(session: Session, test_nested_site_id: int) -> None:
+def test_space_site_id_is_frozen(session: Session, nested_space: Space) -> None:
     """Assigning to the frozen site_id field raises ValidationError."""
-    sp = session.get(Space, test_nested_site_id)
+    assert nested_space.site_id is not None
+    sp = session.get(Space, nested_space.site_id)
     with pytest.raises(ValidationError):
-        sp.site_id = 9999  # type: ignore[misc]
+        sp.site_id = 9999
 
 
 def test_space_parent_site_id_is_frozen(
     session: Session,
-    test_nested_site_id: int,
+    nested_space: Space,
 ) -> None:
     """parent_site_id is frozen after construction."""
-    sp = session.get(Space, test_nested_site_id)
+    assert nested_space.site_id is not None
+    sp = session.get(Space, nested_space.site_id)
     with pytest.raises(ValidationError):
-        sp.parent_site_id = 1  # type: ignore[misc]
+        sp.parent_site_id = 1
 
 
 # ---------------------------------------------------------------------------
-# Space — write tests (skipped if API user lacks 'Add/modify a space' rights)
+# Space — write tests
 # ---------------------------------------------------------------------------
 
 def test_nested_space_created_with_pk(nested_space: Space) -> None:
@@ -282,10 +354,7 @@ def test_nested_space_description_update(
     assert not sp.is_dirty
     sp.site_description = _SPACE_DESC_UPDATED
     assert sp.is_dirty
-    try:
-        write_session.flush()
-    except ApiError as exc:
-        pytest.skip(f"Space update requires elevated permissions: {exc}")
+    write_session.flush()
     assert not sp.is_dirty
 
     fresh = open_session()
@@ -307,10 +376,7 @@ def test_nested_space_name_update(
     sp = write_session.get(Space, nested_space.site_id)
     renamed = _SPACE_CHILD_NAME + "-renamed"
     sp.site_name = renamed
-    try:
-        write_session.flush()
-    except ApiError as exc:
-        pytest.skip(f"Space update requires elevated permissions: {exc}")
+    write_session.flush()
 
     fresh = open_session()
     try:
@@ -330,10 +396,7 @@ def test_nested_space_class_params(
     assert nested_space.site_id is not None
     sp = write_session.get(Space, nested_space.site_id)
     sp.class_params["env"] = "pytest"
-    try:
-        write_session.flush()
-    except ApiError as exc:
-        pytest.skip(f"Space update requires elevated permissions: {exc}")
+    write_session.flush()
 
     fresh = open_session()
     try:
@@ -352,9 +415,9 @@ def test_nested_block_created_with_pk(nested_block: Subnet) -> None:
     assert nested_block.subnet_id is not None
 
 
-def test_nested_block_site_id(nested_block: Subnet, test_nested_site_id: int) -> None:
+def test_nested_block_site_id(nested_block: Subnet, nested_space: Space) -> None:
     """Block subnet's site_id matches the nested space."""
-    assert nested_block.site_id == test_nested_site_id
+    assert nested_block.site_id == nested_space.site_id
 
 
 def test_nested_block_is_level_0(session: Session, nested_block: Subnet) -> None:
@@ -373,6 +436,7 @@ def test_nested_block_network_address(
     assert nested_block.subnet_id is not None
     sn = session.get(Subnet, nested_block.subnet_id)
     expected = _nested_block_net(test_network)
+    assert sn.subnet is not None
     assert sn.subnet.network_address == expected.network_address
     assert sn.subnet.prefixlen == expected.prefixlen
 
@@ -395,33 +459,35 @@ def test_nested_child_parent_block_id(
 def test_nested_child_site_id(
     session: Session,
     nested_child: Subnet,
-    test_nested_site_id: int,
+    nested_space: Space,
 ) -> None:
     """Child subnet's site_id matches the nested space."""
     assert nested_child.subnet_id is not None
     sn = session.get(Subnet, nested_child.subnet_id)
-    assert sn.site_id == test_nested_site_id
+    assert sn.site_id == nested_space.site_id
 
 
 def test_subnet_count_in_nested_space(
     session: Session,
-    test_nested_site_id: int,
+    nested_space: Space,
     nested_block: Subnet,
     nested_child: Subnet,
 ) -> None:
     """At least two subnets (block + child) are visible in the nested space."""
-    n = session.count(Subnet, where=Subnet.c.site_id == test_nested_site_id)
+    assert nested_space.site_id is not None
+    n = session.count(Subnet, where=Subnet.c.site_id == nested_space.site_id)
     assert n >= 2
 
 
 def test_subnet_list_site_filter(
     session: Session,
-    test_nested_site_id: int,
+    nested_space: Space,
     nested_block: Subnet,
 ) -> None:
     """list() with site_id WHERE returns only nested-space subnets."""
-    results = session.list(Subnet, where=Subnet.c.site_id == test_nested_site_id)
-    assert all(s.site_id == test_nested_site_id for s in results)
+    assert nested_space.site_id is not None
+    results = session.list(Subnet, where=Subnet.c.site_id == nested_space.site_id)
+    assert all(s.site_id == nested_space.site_id for s in results)
     assert any(s.subnet_id == nested_block.subnet_id for s in results)
 
 
@@ -440,6 +506,7 @@ def test_nested_space_find_free_subnet(
     """ip_find_free_subnet works for a block inside a nested space."""
     candidates = session.find_free_subnet(prefix=28, subnet=nested_block)
     assert len(candidates) >= 1
+    assert nested_block.subnet is not None
     assert candidates[0].start_ip_addr in nested_block.subnet
 
 
@@ -487,3 +554,88 @@ def test_nested_subnet_class_params(
         assert refetched.class_params["env"] == "pytest-nested"
     finally:
         fresh._client.close()
+
+
+# ---------------------------------------------------------------------------
+# Deeply nested Spaces (3+ levels: root → child-a → deep-b → deeper-c)
+# ---------------------------------------------------------------------------
+
+def test_deep_space_created_with_pk(deep_space: Space) -> None:
+    """Server returns a ret_oid stored in site_id for the depth-2 space."""
+    assert deep_space.site_id is not None
+
+
+def test_deep_space_parent_is_nested(deep_space: Space, nested_space: Space) -> None:
+    """deep_space.parent_site_id resolves to nested_space."""
+    assert deep_space.parent_site_id == nested_space.site_id
+
+
+def test_deep_space_tree_level(session: Session, deep_space: Space) -> None:
+    """Depth-2 space has tree_level >= 2."""
+    assert deep_space.site_id is not None
+    sp = session.get(Space, deep_space.site_id)
+    assert sp.tree_level is not None and sp.tree_level >= 2
+
+
+def test_deep_space_site_name(session: Session, deep_space: Space) -> None:
+    assert deep_space.site_id is not None
+    sp = session.get(Space, deep_space.site_id)
+    assert sp.site_name == _SPACE_DEEP_NAME
+
+
+def test_deep_space_tree_path_contains_parent_names(
+    session: Session,
+    deep_space: Space,
+    nested_space: Space,
+) -> None:
+    """tree_path of the depth-2 space contains both parent space names."""
+    assert deep_space.site_id is not None
+    sp = session.get(Space, deep_space.site_id)
+    assert sp.tree_path is not None
+    assert nested_space.site_name is not None
+    assert nested_space.site_name in sp.tree_path
+
+
+def test_deeper_space_created_with_pk(deeper_space: Space) -> None:
+    """Server returns a ret_oid stored in site_id for the depth-3 space."""
+    assert deeper_space.site_id is not None
+
+
+def test_deeper_space_parent_is_deep(deeper_space: Space, deep_space: Space) -> None:
+    """deeper_space.parent_site_id resolves to deep_space."""
+    assert deeper_space.parent_site_id == deep_space.site_id
+
+
+def test_deeper_space_tree_level(session: Session, deeper_space: Space) -> None:
+    """Depth-3 space has tree_level >= 3."""
+    assert deeper_space.site_id is not None
+    sp = session.get(Space, deeper_space.site_id)
+    assert sp.tree_level is not None and sp.tree_level >= 3
+
+
+def test_deeper_space_site_name(session: Session, deeper_space: Space) -> None:
+    assert deeper_space.site_id is not None
+    sp = session.get(Space, deeper_space.site_id)
+    assert sp.site_name == _SPACE_DEEPER_NAME
+
+
+def test_deeper_space_tree_path_contains_all_ancestors(
+    session: Session,
+    deeper_space: Space,
+    deep_space: Space,
+    nested_space: Space,
+) -> None:
+    """tree_path of the depth-3 space contains names of all ancestor spaces."""
+    assert deeper_space.site_id is not None
+    sp = session.get(Space, deeper_space.site_id)
+    assert sp.tree_path is not None
+    assert nested_space.site_name is not None and nested_space.site_name in sp.tree_path
+    assert deep_space.site_name is not None and deep_space.site_name in sp.tree_path
+
+
+def test_deeper_space_id_filter(session: Session, deeper_space: Space) -> None:
+    """.id_filter on the depth-3 space returns exactly one result."""
+    assert deeper_space.site_id is not None
+    results = session.list(Space, where=deeper_space.id_filter)
+    assert len(results) == 1
+    assert results[0].site_id == deeper_space.site_id

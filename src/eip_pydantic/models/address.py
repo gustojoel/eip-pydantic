@@ -66,8 +66,10 @@ class IpAddress(SolidServerModel):
     # ------------------------------------------------------------------
     # IP address (frozen — change requires delete + recreate)
     # ------------------------------------------------------------------
-    ip_addr: IPv4Address | None = Field(None, frozen=True)    # hex-encoded
-    hostaddr: IPv4Address | None = Field(None, frozen=True)   # dotted-decimal
+    hostaddr: IPv4Address = Field(frozen=True) # required
+    @property
+    def ip_addr(self) -> IPv4Address:  # noqa: D102
+        return self.hostaddr
 
     # ------------------------------------------------------------------
     # MAC address (mutable)
@@ -210,11 +212,14 @@ class IpAddress(SolidServerModel):
         """
         if operation != "create":
             return super().build_request(operation, **kwargs)
-        if self.hostaddr is None or self.site_id is None:
-            raise ValueError("hostaddr and site_id are required to create an IpAddress")
+        if self.site_id is None and self.site_name is None:
+            raise ValueError("site_id or site_name is required to create an IpAddress")
         params = self.write_params()
         params["hostaddr"] = str(self.hostaddr)
-        params["site_id"] = str(self.site_id)
+        if self.site_id is not None:
+            params["site_id"] = str(self.site_id)
+        if self.site_name is not None:
+            params["site_name"] = self.site_name
         if self.subnet_id is not None:
             params["subnet_id"] = str(self.subnet_id)
         return ("POST", type(self).solid_config.paths["add"], params)
@@ -243,8 +248,9 @@ class IpAddress(SolidServerModel):
             if key in _BLOB_KEYS:
                 continue
             match key:
+                case ("ip_addr"):
+                    pass
                 case (
-                    "ip_addr" |
                     "free_start_ip_addr" | "free_end_ip_addr" |
                     "pool_start_ip_addr" | "pool_end_ip_addr" |
                     "subnet_start_ip_addr" | "subnet_end_ip_addr" |

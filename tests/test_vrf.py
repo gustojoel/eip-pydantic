@@ -3,12 +3,16 @@
 Wire-format fixtures are based on the vrfobject_list / vrfobject_info response
 shape described in the SolidServer API reference (Chapter 67).
 
+Output fields per the API reference:
+  vrfobject_id, vrfobject_rd_id, vrfobject_name, vrfobject_comment,
+  vrfobject_class_name, row_enabled, vrfobject_class_parameters,
+  vrfobject_class_parameters_properties, vrfobject_class_parameters_inheritance_source
+
 Key coercion facts verified here:
   - vrfobject_id / errno → int via _as_int
   - row_enabled → RowEnabled int enum ("0"/"1"/"2")
-  - trace_creation_origin_usr_id uses "0" as FK-null sentinel (nz_int → None)
-  - vrfobject_class_parameters blobs → ClassParamDict
   - "" / "#" sentinel strings on declared str fields → None
+  - vrfobject_class_parameters blobs → ClassParamDict
 """
 
 import httpx
@@ -20,13 +24,12 @@ from eip_pydantic.models.base import RowEnabled
 from eip_pydantic.models.vrf import Vrf
 
 
-
 HOST = "solidserver.example.com"
 CREDS = ("admin", "secret")
 BASE = "https://solidserver.example.com/"
 
 # ---------------------------------------------------------------------------
-# Wire-format fixtures
+# Wire-format fixtures — only fields the API actually returns
 # ---------------------------------------------------------------------------
 
 _LIST_ROW: dict[str, str] = {
@@ -40,15 +43,6 @@ _LIST_ROW: dict[str, str] = {
     "vrfobject_class_parameters_properties": "owner=set,propagate&env=set,propagate",
     "vrfobject_class_parameters_inheritance_source": "owner=real_vrfobject,7&env=real_vrfobject,7",
     "row_enabled": "1",
-    "multistatus": "",
-    "trace_creation_date": "1700000000",
-    "trace_last_update_date": "1700010000",
-    "trace_creation_usr_id": "3",
-    "trace_creation_origin_usr_id": "0",
-    "trace_creation_origin": "",
-    "trace_creation_exec_stack": "",
-    "trace_creation_usr_login": "admin",
-    "trace_creation_origin_usr_login": "#",
 }
 
 _MINIMAL_ROW: dict[str, str] = {
@@ -62,15 +56,6 @@ _MINIMAL_ROW: dict[str, str] = {
     "vrfobject_class_parameters_properties": "",
     "vrfobject_class_parameters_inheritance_source": "",
     "row_enabled": "2",
-    "multistatus": "#",
-    "trace_creation_date": "0",
-    "trace_last_update_date": "0",
-    "trace_creation_usr_id": "1",
-    "trace_creation_origin_usr_id": "0",
-    "trace_creation_origin": "#",
-    "trace_creation_exec_stack": "#",
-    "trace_creation_usr_login": "root",
-    "trace_creation_origin_usr_login": "#",
 }
 
 # ---------------------------------------------------------------------------
@@ -95,9 +80,8 @@ def test_vrf_string_fields_preserved() -> None:
 def test_vrf_string_sentinel_empty_to_none() -> None:
     v = Vrf.model_validate(_MINIMAL_ROW)
     assert v.vrfobject_rd_id is None        # "" → None
-    assert v.vrfobject_comment is None       # "" → None
-    assert v.vrfobject_class_name is None    # "" → None
-    assert v.multistatus is None             # "#" → None
+    assert v.vrfobject_comment is None      # "" → None
+    assert v.vrfobject_class_name is None   # "" → None
 
 
 def test_vrf_row_enabled_enabled() -> None:
@@ -113,16 +97,6 @@ def test_vrf_row_enabled_unmanaged() -> None:
 def test_vrf_row_enabled_deleted() -> None:
     v = Vrf.model_validate({**_LIST_ROW, "row_enabled": "0"})
     assert v.row_enabled == RowEnabled.DELETED
-
-
-def test_vrf_nz_int_trace_origin_absent_when_zero() -> None:
-    v = Vrf.model_validate(_LIST_ROW)
-    assert v.trace_creation_origin_usr_id is None
-
-
-def test_vrf_nz_int_trace_usr_id_present() -> None:
-    v = Vrf.model_validate(_LIST_ROW)
-    assert v.trace_creation_usr_id == 3
 
 
 def test_vrf_class_params_values() -> None:

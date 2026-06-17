@@ -321,11 +321,50 @@ def test_build_request_create_subnet_injects_addr_and_prefix() -> None:
     assert params["site_id"] == "7"
 
 
+def test_build_request_create_subnet_with_parent_subnet_id_only() -> None:
+    # No site_id — parent_subnet_id alone must satisfy the guard and appear in params.
+    sn = Subnet(
+        subnet_name="child-net",
+        subnet=IPv4Network("10.0.1.0/25"),
+        parent_subnet_id=99,
+        subnet_level=1,
+    )
+    sn.mark_new()
+    verb, path, params = sn.build_request("create")
+    assert verb == "POST"
+    assert path == "rest/ip_subnet_add"
+    assert params["subnet_addr"] == "10.0.1.0"
+    assert params["subnet_prefix"] == "25"
+    assert params["parent_subnet_id"] == "99"
+    assert "site_id" not in params
+
+
+def test_build_request_create_subnet_with_site_name_only() -> None:
+    sn = Subnet(
+        subnet_name="new-net",
+        subnet=IPv4Network("10.0.2.0/24"),
+        site_name="global",
+    )
+    sn.mark_new()
+    verb, path, params = sn.build_request("create")
+    assert verb == "POST"
+    assert params["subnet_addr"] == "10.0.2.0"
+    assert params["subnet_prefix"] == "24"
+    assert params["site_name"] == "global"
+    assert "site_id" not in params
+
+
+def test_build_request_create_subnet_no_identifier_raises() -> None:
+    sn = Subnet(subnet_name="test-net", subnet=IPv4Network("10.0.0.0/24"))
+    with pytest.raises(ValueError, match="site_id"):
+        sn.build_request("create")
+
+
 def test_build_request_delete_subnet() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
     verb, path, params = sn.build_request("delete")
     assert verb == "DELETE"
-    assert path == "rest/ip_block_subnet_delete"
+    assert path == "rest/ip_subnet_delete"
     assert params == {"subnet_id": "1"}
 
 

@@ -4,9 +4,9 @@ Wire-format fixtures use RFC 5737 address ranges (192.0.2.x) and are based on
 the actual ip_pool_list / ip_pool_info response shape observed against a live server.
 
 Key coercion facts verified here:
-  - start_ip_addr / end_ip_addr / pool_start_ip_addr / pool_end_ip_addr /
-    subnet_start_ip_addr / subnet_end_ip_addr arrive as 8-char hex strings
-  - start_hostaddr / end_hostaddr arrive as dotted-decimal strings
+  - start_ip_addr / end_ip_addr / subnet_start_ip_addr / subnet_end_ip_addr arrive as 8-char hex strings
+    (pool_start_ip_addr / pool_end_ip_addr / start_hostaddr / end_hostaddr are consumed and dropped)
+  - pool_size is derived from start_ip_addr + end_ip_addr when missing, and vice-versa
   - pool_read_only is a boolean (bool coercion: "0"/"1")
   - row_enabled is a RowEnabled int enum ("0"/"1"/"2")
   - parent_subnet_id / vlsm_subnet_id / vlsm_block_id use "0" as FK-null sentinel (nz_int → None)
@@ -122,16 +122,6 @@ def test_pool_hex_ip_end() -> None:
     assert p.end_ip_addr == IPv4Address("192.0.2.239")
 
 
-def test_pool_hex_ip_pool_start() -> None:
-    p = Pool.model_validate(_LIST_ROW)
-    assert p.pool_start_ip_addr == IPv4Address("192.0.2.10")
-
-
-def test_pool_hex_ip_pool_end() -> None:
-    p = Pool.model_validate(_LIST_ROW)
-    assert p.pool_end_ip_addr == IPv4Address("192.0.2.239")
-
-
 def test_pool_hex_ip_subnet_start() -> None:
     p = Pool.model_validate(_LIST_ROW)
     assert p.subnet_start_ip_addr == IPv4Address("192.0.2.0")
@@ -142,14 +132,18 @@ def test_pool_hex_ip_subnet_end() -> None:
     assert p.subnet_end_ip_addr == IPv4Address("192.0.2.255")
 
 
-def test_pool_dotted_hostaddr_start() -> None:
-    p = Pool.model_validate(_LIST_ROW)
-    assert p.start_hostaddr == IPv4Address("192.0.2.10")
+def test_pool_pool_size_derived_from_start_and_end() -> None:
+    # pool_size can be computed from start + end when absent in wire data
+    row = {k: v for k, v in _LIST_ROW.items() if k != "pool_size"}
+    p = Pool.model_validate(row)
+    assert p.pool_size == 230  # int("c00002ef") - int("c000020a") + 1
 
 
-def test_pool_dotted_hostaddr_end() -> None:
-    p = Pool.model_validate(_LIST_ROW)
-    assert p.end_hostaddr == IPv4Address("192.0.2.239")
+def test_pool_end_ip_derived_from_start_and_size() -> None:
+    # end_ip_addr can be computed from start + pool_size when absent in wire data
+    row = {k: v for k, v in _LIST_ROW.items() if k != "end_ip_addr"}
+    p = Pool.model_validate(row)
+    assert p.end_ip_addr == IPv4Address("192.0.2.239")
 
 
 def test_pool_int_fields() -> None:
@@ -328,8 +322,8 @@ def test_pool_write_params_class_params() -> None:
 
 def test_pool_write_params_none_value_becomes_empty_string() -> None:
     p = Pool.model_validate(_LIST_ROW)
-    p.pool_name = None
-    assert p.write_params() == {"pool_name": ""}
+    p.pool_class_name = None
+    assert p.write_params() == {"pool_class_name": ""}
 
 
 def test_pool_not_dirty_initially() -> None:
@@ -360,20 +354,25 @@ def test_pool_build_request_create_includes_dirty_fields() -> None:
 
 
 def test_pool_build_request_create_missing_start_raises() -> None:
-    p = Pool.model_validate({**_LIST_ROW, "start_hostaddr": ""})
-    with pytest.raises(ValueError, match="start_hostaddr"):
-        p.build_request("create")
+    # start_ip_addr is a required model field; construction fails when absent
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        Pool.model_validate({k: v for k, v in _LIST_ROW.items() if k != "start_ip_addr"})
 
 
 def test_pool_build_request_create_missing_end_raises() -> None:
-    p = Pool.model_validate({**_LIST_ROW, "end_hostaddr": ""})
-    with pytest.raises(ValueError, match="end_hostaddr"):
-        p.build_request("create")
+    # end_ip_addr must either be in the data or derivable from pool_size + start_ip_addr;
+    # absent both → ValidationError on the required field
+    from pydantic import ValidationError
+    row = {k: v for k, v in _LIST_ROW.items() if k not in ("end_ip_addr", "pool_size")}
+    with pytest.raises(ValidationError):
+        Pool.model_validate(row)
 
 
-def test_pool_build_request_create_missing_subnet_raises() -> None:
-    p = Pool.model_validate({**_LIST_ROW, "subnet_id": "0"})
-    with pytest.raises(ValueError, match="subnet_id"):
+def test_pool_build_request_create_missing_identifier_raises() -> None:
+    # site_id / site_name / subnet_id: all three absent → ValueError from build_request
+    p = Pool.model_validate({**_LIST_ROW, "subnet_id": "0", "site_id": "0", "site_name": ""})
+    with pytest.raises(ValueError, match="site_id"):
         p.build_request("create")
 
 

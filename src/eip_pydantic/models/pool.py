@@ -30,12 +30,11 @@ class Pool(SolidServerModel):
         class_param_prefix="pool",
         tags_prefix="pool",
         create_fields=frozenset({
-            # placement: subnet_id required; site_id/site_name also accepted by ip_pool_add
-            "subnet_id", "site_id", "site_name",
-            "start_hostaddr", "end_hostaddr",
-            # metadata
+            # Either site_id or site_name or subnet_id is required to create a pool
+            "site_id", "site_name", "subnet_id",
+            # To create a pool, start_ip_addr and either end_ip_addr or pool_size are required.
+            "start_ip_addr", "end_ip_addr", "pool_size",
             "pool_name", "pool_class_name", "class_params",
-            # behaviour flags
             "pool_read_only",
         }),
         paths=MappingProxyType({
@@ -57,13 +56,9 @@ class Pool(SolidServerModel):
     # ------------------------------------------------------------------
     # Address range (frozen — change requires delete + recreate)
     # ------------------------------------------------------------------
-    start_ip_addr: IPv4Address | None = Field(None, frozen=True)       # hex
-    start_hostaddr: IPv4Address | None = Field(None, frozen=True)      # dotted
-    end_ip_addr: IPv4Address | None = Field(None, frozen=True)         # hex
-    end_hostaddr: IPv4Address | None = Field(None, frozen=True)        # dotted
-    pool_start_ip_addr: IPv4Address | None = Field(None, frozen=True)  # hex (alias)
-    pool_end_ip_addr: IPv4Address | None = Field(None, frozen=True)    # hex (alias)
-    pool_size: int | None = Field(None, frozen=True)
+    start_ip_addr: IPv4Address = Field(frozen=True)
+    end_ip_addr: IPv4Address = Field(frozen=True)
+    pool_size: int = Field(frozen=True)
 
     # ------------------------------------------------------------------
     # Class system
@@ -121,6 +116,8 @@ class Pool(SolidServerModel):
     trace_creation_usr_login: str | None = Field(None, frozen=True)
     trace_creation_origin_usr_login: str | None = Field(None, frozen=True)
 
+
+
     # ------------------------------------------------------------------
     # Write serialisation
     # ------------------------------------------------------------------
@@ -133,8 +130,8 @@ class Pool(SolidServerModel):
             if isinstance(val, ClassParamDict):
                 continue
             match field:
-                case "start_hostaddr" | "end_hostaddr":
-                    pass  # renamed to start_addr/end_addr in build_request
+                case "start_ip_addr" | "end_ip_addr" | "pool_size":
+                    pass  # emitted as start_addr/end_addr in build_request
                 case "pool_read_only":
                     out[field] = self._to_bool_str(val)
                 case "row_enabled":
@@ -142,6 +139,8 @@ class Pool(SolidServerModel):
                 case _:
                     out[field] = "" if val is None else str(val)
         return out
+
+
 
     def build_request(
         self,
@@ -156,15 +155,22 @@ class Pool(SolidServerModel):
         """
         if operation != "create":
             return super().build_request(operation, **kwargs)
-        if self.start_hostaddr is None or self.end_hostaddr is None or self.subnet_id is None:
+        if self.site_id is None and self.site_name is None and self.subnet_id is None:
             raise ValueError(
-                "start_hostaddr, end_hostaddr, and subnet_id are required to create a Pool",
+                "site_id, site_name, or subnet_id is required to create a Pool",
             )
         params = self.write_params()
-        params["start_addr"] = str(self.start_hostaddr)
-        params["end_addr"] = str(self.end_hostaddr)
-        params["subnet_id"] = str(self.subnet_id)
+        params["start_addr"] = str(self.start_ip_addr)
+        params["end_addr"] = str(self.end_ip_addr)
+        if self.site_id is not None:
+            params["site_id"] = str(self.site_id)
+        if self.site_name is not None:
+            params["site_name"] = self.site_name
+        if self.subnet_id is not None:
+            params["subnet_id"] = str(self.subnet_id)
         return ("POST", type(self).solid_config.paths["add"], params)
+
+
 
     @model_validator(mode="before")
     @classmethod
@@ -188,14 +194,13 @@ class Pool(SolidServerModel):
             if key in _BLOB_KEYS:
                 continue
             match key:
+                case ("pool_start_ip_addr" | "pool_end_ip_addr" | "start_hostaddr" | "end_hostaddr"):
+                    pass
                 case (
                     "start_ip_addr" | "end_ip_addr" |
-                    "pool_start_ip_addr" | "pool_end_ip_addr" |
                     "subnet_start_ip_addr" | "subnet_end_ip_addr"
                 ):
                     out[key] = cls._as_hex_ipv4(val)
-                case "start_hostaddr" | "end_hostaddr":
-                    out[key] = cls._as_dotted_ipv4(val)
                 case (
                     "errno" | "pool_id" | "pool_size" |
                     "parent_subnet_size" | "subnet_size"
@@ -220,6 +225,11 @@ class Pool(SolidServerModel):
                         out[key] = cls._as_str(val)
                     else:
                         out[key] = val
+
+        if 'end_ip_addr' not in out and 'pool_size' in out and 'start_ip_addr' in out:
+            out['end_ip_addr'] = IPv4Address(int(out['start_ip_addr']) + out['pool_size'] - 1)
+        elif 'pool_size' not in out and 'start_ip_addr' in out and 'end_ip_addr' in out:
+            out['pool_size'] = int(out['end_ip_addr']) - int(out['start_ip_addr']) + 1
 
         if not isinstance(out.get("class_params"), ClassParamDict):
             out["class_params"] = ClassParamDict.from_blobs(

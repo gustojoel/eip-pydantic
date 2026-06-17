@@ -516,13 +516,15 @@ def test_address_build_request_create_includes_dirty_fields() -> None:
 
 
 def test_address_build_request_create_missing_hostaddr_raises() -> None:
-    a = IpAddress.model_validate({**_LIST_ROW, "hostaddr": ""})
-    with pytest.raises(ValueError, match="hostaddr"):
-        a.build_request("create")
+    # hostaddr is a required model field; empty string → None → ValidationError at construction
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        IpAddress.model_validate({**_LIST_ROW, "hostaddr": ""})
 
 
 def test_address_build_request_create_missing_site_id_raises() -> None:
-    a = IpAddress.model_validate({**_LIST_ROW, "site_id": "0"})
+    # must clear both site_id and site_name to trigger the build_request guard
+    a = IpAddress.model_validate({**_LIST_ROW, "site_id": "0", "site_name": ""})
     with pytest.raises(ValueError, match="site_id"):
         a.build_request("create")
 

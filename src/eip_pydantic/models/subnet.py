@@ -155,13 +155,13 @@ class Subnet(SolidServerModel):
         class_param_prefix="subnet",
         tags_prefix="network",
         create_fields=frozenset({
-            # Either site_id or site_name is required to define the parent Space.
-            "site_id", "site_name",
+            # Either site_id or site_name or parent_subnet_id is required to define the parent Space or Subnet.
+            "site_id", "site_name", "parent_subnet_id",
             # Either vlsm_site_id or vlsm_site_name is required to define the VLSM Space.
             "vlsm_site_id", "vlsm_site_name",
             # subnet_name and subnet are required, and must be unique.
             "subnet_name", "subnet",
-            "subnet_level", "parent_subnet_id",
+            "subnet_level",
             "subnet_class_name", "class_params",
             "is_terminal",
             "vlmvlan_id",
@@ -172,7 +172,7 @@ class Subnet(SolidServerModel):
             "info":   "rest/ip_block_subnet_info",
             "count":  "rest/ip_block_subnet_count",
             "add":    "rest/ip_subnet_add",
-            "delete": "rest/ip_block_subnet_delete",
+            "delete": "rest/ip_subnet_delete",
         }),
     )
 
@@ -188,19 +188,19 @@ class Subnet(SolidServerModel):
     # ------------------------------------------------------------------
     # IP addressing (frozen — change of range requires delete + recreate)
     # ------------------------------------------------------------------
-    subnet: IPv4Network = Field(frozen=True)
+    subnet: IPv4Network | None = Field(None, frozen=True)
     @property
-    def start_ip_addr(self) -> IPv4Address:  # noqa: D102
-        return self.subnet.network_address
+    def start_ip_addr(self) -> IPv4Address | None:  # noqa: D102
+        return self.subnet.network_address if self.subnet is not None else None
     @property
-    def end_ip_addr(self) -> IPv4Address:  # noqa: D102
-        return self.subnet.broadcast_address
+    def end_ip_addr(self) -> IPv4Address | None:  # noqa: D102
+        return self.subnet.broadcast_address if self.subnet is not None else None
     @property
-    def subnet_size(self) -> int:  # noqa: D102
-        return self.subnet.num_addresses
+    def subnet_size(self) -> int | None:  # noqa: D102
+        return self.subnet.num_addresses if self.subnet is not None else None
     @property
-    def subnet_prefix(self) -> int:  # noqa: D102
-        return self.subnet.prefixlen
+    def subnet_prefix(self) -> int | None:  # noqa: D102
+        return self.subnet.prefixlen if self.subnet is not None else None
 
     subnet_is_valid: bool | None = Field(None, frozen=True)
 
@@ -339,14 +339,21 @@ class Subnet(SolidServerModel):
         """
         if operation != "create":
             return super().build_request(operation, **kwargs)
-        if self.site_id is None:
+        if self.site_id is None and self.site_name is None and self.parent_subnet_id is None:
             raise ValueError(
-                "site_id is required to create a Subnet",
+                "site_id, site_name, or parent_subnet_id is required to create a Subnet",
             )
+        if self.subnet is None:
+            raise ValueError("subnet address is required to create a Subnet")
         params = self.write_params()
-        params["subnet_addr"] = str(self.start_ip_addr)
-        params["subnet_prefix"] = str(self.subnet_prefix)
-        params["site_id"] = str(self.site_id)
+        params["subnet_addr"] = str(self.subnet.network_address)
+        params["subnet_prefix"] = str(self.subnet.prefixlen)
+        if self.site_id is not None:
+            params["site_id"] = str(self.site_id)
+        if self.site_name is not None:
+            params["site_name"] = self.site_name
+        if self.parent_subnet_id is not None:
+            params["parent_subnet_id"] = str(self.parent_subnet_id)
         return ("POST", type(self).solid_config.paths["add"], params)
 
 

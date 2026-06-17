@@ -1,5 +1,4 @@
 """Vrf model (``vrfobject_list`` / ``vrfobject_info``)."""
-from datetime import datetime
 from types import MappingProxyType
 from typing import Any, ClassVar, cast
 
@@ -9,20 +8,7 @@ from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
 
 
-
 class Vrf(SolidServerModel):
-    """An EfficientIP VRF object (``vrfobject_list`` / ``vrfobject_info``).
-
-    VRF objects represent Virtual Routing and Forwarding instances.  They are
-    stand-alone objects not nested within a Space hierarchy.
-
-    Mutable fields (writable via ``Session.flush()``):
-        ``vrfobject_name``, ``vrfobject_rd_id``, ``vrfobject_comment``,
-        ``vrfobject_class_name``, ``class_params``, ``row_enabled``.
-
-    All other fields are frozen and reflect server-managed state.
-    """
-
     solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
         pk_field="vrfobject_id",
         class_param_prefix="vrfobject",
@@ -40,45 +26,16 @@ class Vrf(SolidServerModel):
         }),
     )
 
-    # ------------------------------------------------------------------
-    # Core identity
-    # ------------------------------------------------------------------
     vrfobject_id: int | None = Field(None, frozen=True)
-    vrfobject_name: str  # required, unique, max 128
-    vrfobject_rd_id: str | None = None       # Route Distinguisher (RFC 4364)
-    vrfobject_comment: str | None = None     # description / free text
-
-    # ------------------------------------------------------------------
-    # Class system
-    # ------------------------------------------------------------------
+    vrfobject_name: str
+    vrfobject_rd_id: str | None = None
+    vrfobject_comment: str | None = None
     vrfobject_class_name: str | None = None
     class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)
-
-    # ------------------------------------------------------------------
-    # Status
-    # ------------------------------------------------------------------
     row_enabled: RowEnabled | None = None
-    multistatus: str | None = Field(None, frozen=True)
-
-    # ------------------------------------------------------------------
-    # Audit trail (frozen)
-    # ------------------------------------------------------------------
-    trace_creation_date: datetime | None = Field(None, frozen=True)
-    trace_last_update_date: datetime | None = Field(None, frozen=True)
-    trace_creation_usr_id: int | None = Field(None, frozen=True)
-    trace_creation_origin_usr_id: int | None = Field(None, frozen=True)
-    trace_creation_origin: str | None = Field(None, frozen=True)
-    trace_creation_exec_stack: str | None = Field(None, frozen=True)
-    trace_creation_usr_login: str | None = Field(None, frozen=True)
-    trace_creation_origin_usr_login: str | None = Field(None, frozen=True)
-
-    # ------------------------------------------------------------------
-    # Write serialisation
-    # ------------------------------------------------------------------
 
     def write_params(self) -> dict[str, str]:
-        """Serialise dirty mutable fields to the wire format expected by ``vrf_vrfobject_add``."""
-        out = super().write_params()   # handles class_params → vrfobject_class_parameters etc.
+        out = super().write_params()
         for field in self._dirty:
             val = getattr(self, field)
             if isinstance(val, ClassParamDict):
@@ -90,17 +47,7 @@ class Vrf(SolidServerModel):
                     out[field] = "" if val is None else str(val)
         return out
 
-    def build_request(
-        self,
-        operation: str,
-        **kwargs: Any,
-    ) -> tuple[str, str, dict[str, str]]:
-        """Build an HTTP request descriptor, omitting ``add_flag`` on ``create``.
-
-        The ``vrf_vrfobject_add`` endpoint defaults to ``new_edit``, which is the
-        correct behaviour for VRF creation — passing ``new_only`` would fail if the
-        object already exists after a partial flush.
-        """
+    def build_request(self, operation: str, **kwargs: Any) -> tuple[str, str, dict[str, str]]:
         if operation != "create":
             return super().build_request(operation, **kwargs)
         params = self.write_params()
@@ -113,7 +60,7 @@ class Vrf(SolidServerModel):
             return data
         v = cast(dict[str, Any], data)
 
-        _BLOB_KEYS = frozenset({  # noqa: N806
+        _BLOB_KEYS = frozenset({
             "vrfobject_class_parameters",
             "vrfobject_class_parameters_properties",
             "vrfobject_class_parameters_inheritance_source",
@@ -126,13 +73,6 @@ class Vrf(SolidServerModel):
             match key:
                 case "errno" | "vrfobject_id" | "row_enabled":
                     out[key] = cls._as_int(val)
-                case (
-                    "trace_creation_usr_id" |
-                    "trace_creation_origin_usr_id"
-                ):
-                    out[key] = cls._as_nz_int(val)
-                case "trace_creation_date" | "trace_last_update_date":
-                    out[key] = cls._as_datetime(val)
                 case _:
                     if isinstance(val, ClassParamDict):
                         out[key] = val

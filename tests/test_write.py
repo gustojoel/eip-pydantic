@@ -1,6 +1,6 @@
 """Tests for the write layer: dirty tracking, frozen enforcement, serialisation, Session."""
 
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv4Network
 
 import httpx
 import pytest
@@ -108,7 +108,7 @@ def test_frozen_subnet_pk_raises() -> None:
 def test_frozen_ip_address_raises() -> None:
     sn = Subnet.model_validate(_SUBNET_ROW)
     with pytest.raises(ValidationError):
-        sn.start_hostaddr = IPv4Address("10.0.0.1")  # type: ignore[misc]
+        sn.subnet = IPv4Network("192.168.0.0/24")  # type: ignore[misc]
 
 
 def test_frozen_site_linkage_on_subnet_raises() -> None:
@@ -903,3 +903,72 @@ def test_apply_response_update_clears_dirty() -> None:
 def test_apply_response_delete_noop() -> None:
     sp = Space.model_validate(_SPACE_ROW)
     sp.apply_response("delete", {})
+
+
+# ---------------------------------------------------------------------------
+# BaseSession.create — write_params seeded from create_fields on mark_new
+# ---------------------------------------------------------------------------
+
+
+def test_create_space_write_params_has_name() -> None:
+    sp = Space(site_name="new-space")
+    sp.mark_new()
+    params = sp.write_params()
+    assert params["site_name"] == "new-space"
+
+
+def test_create_space_write_params_excludes_none() -> None:
+    sp = Space(site_name="new-space")
+    sp.mark_new()
+    params = sp.write_params()
+    assert "site_description" not in params
+
+
+def test_create_space_write_params_bool_field() -> None:
+    sp = Space(site_name="tmpl", site_is_template=True)
+    sp.mark_new()
+    params = sp.write_params()
+    assert params["site_is_template"] == "1"
+
+
+def test_create_subnet_write_params_excludes_renamed_fields() -> None:
+    sn = Subnet(site_id=7, subnet=IPv4Network("10.0.0.0/24"), subnet_name="test-net")
+    sn.mark_new()
+    params = sn.write_params()
+    # subnet is not directly emitted; build_request injects subnet_addr/subnet_prefix
+    assert "subnet" not in params
+    # placement fields reach the request via build_request
+    _, _, req_params = sn.build_request("create")
+    assert req_params["subnet_addr"] == "10.0.0.0"
+    assert req_params["subnet_prefix"] == "24"
+    assert req_params["site_id"] == "7"
+
+
+def test_create_subnet_write_params_mutable_fields() -> None:
+    sn = Subnet(site_id=7, start_hostaddr=IPv4Address("10.0.0.0"), subnet_size=256,
+                subnet_name="my-net", subnet_level=1)
+    sn.mark_new()
+    params = sn.write_params()
+    assert params["subnet_name"] == "my-net"
+    assert params["subnet_level"] == "1"
+
+
+@respx.mock
+def test_session_create_space_sends_post() -> None:
+    route = respx.post(f"{BASE}rest/ip_site_add").mock(
+        return_value=httpx.Response(200, json=_ADD_RESPONSE),
+    )
+    with Session(HOST, *CREDS) as s:
+        sp = s.create(Space, site_name="new-space", site_description="Created via SDK")
+    assert route.called
+    params = route.calls.last.request.url.params
+    assert params["site_name"] == "new-space"
+    assert params["site_description"] == "Created via SDK"
+    assert sp.site_id == 42
+
+
+@respx.mock
+def test_session_create_rejects_unknown_fields() -> None:
+    with Session(HOST, *CREDS) as s:
+        with pytest.raises(TypeError, match="not allowed at creation"):
+            s.create(Space, site_id=99)  # type: ignore[call-arg]

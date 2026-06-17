@@ -65,8 +65,10 @@ def test_subnet_info_has_ip_addresses(session: Session) -> None:
         pytest.skip("No subnets available")
     assert subnets[0].subnet_id is not None
     info = session.get(Subnet, subnets[0].subnet_id)
-    assert info.start_hostaddr is not None, "start_hostaddr should be present"
-    assert info.end_hostaddr is not None, "end_hostaddr should be present"
+    # Subnet encodes its address range in the IPv4Network field; network_address
+    # and broadcast_address give the start and end respectively.
+    assert info.subnet.network_address is not None
+    assert info.subnet.broadcast_address is not None
 
 
 def test_subnet_class_params_parseable(session: Session) -> None:

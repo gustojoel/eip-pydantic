@@ -1,15 +1,42 @@
+"""Base model, dirty-tracking machinery, and shared write-layer helpers."""
 import urllib.parse
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import IntEnum
 from ipaddress import IPv4Address
-from typing import Any, ClassVar, cast
+from types import MappingProxyType
+from typing import Any, ClassVar, NamedTuple, cast
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.expressions import ColumnCollection, ColumnExpr, Condition
 
+
+
+_EMPTY_PATHS: MappingProxyType[str, str] = MappingProxyType({})
+
+
+class SolidServerConfig(NamedTuple):
+    """Unit-of-work configuration for a SolidServer model class.
+
+    Set once per model as ``solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(...)``.
+    Mirrors the ``model_config = ConfigDict(...)`` pattern used by Pydantic itself.
+
+    Attributes:
+        pk_field: Name of the primary-key field (e.g. ``"site_id"``).
+        class_param_prefix: API prefix for class-parameter blobs (e.g. ``"site"``).
+        tags_prefix: TAGS object-type name for the expression builder (e.g. ``"network"``).
+        create_fields: Fields the user may supply to ``Session.create()``; ``None`` = unrestricted.
+        paths: Mapping of operation name → REST/RPC path.  Standard keys: ``"list"``,
+            ``"info"``, ``"count"``, ``"add"``, ``"delete"``.  Non-standard keys (e.g.
+            ``"find_free"``) are used by model-specific ``build_class_request`` overrides.
+    """
+    pk_field: str = ""
+    class_param_prefix: str | None = None
+    tags_prefix: str = ""
+    create_fields: frozenset[str] | None = None
+    paths: MappingProxyType[str, str] = _EMPTY_PATHS
 
 
 def _make_notifier(dirty: set[str], field_name: str) -> Callable[[], None]:
@@ -71,14 +98,7 @@ class SolidServerModel(BaseModel):
 
     errno: int | None = Field(None, frozen=True)
 
-    _class_param_prefix: ClassVar[str | None] = None
-    tags_prefix: ClassVar[str] = ""
-    _pk_field: ClassVar[str] = ""
-    _list_path: ClassVar[str] = ""
-    _info_path: ClassVar[str] = ""
-    _count_path: ClassVar[str] = ""
-    _add_path: ClassVar[str] = ""
-    _delete_path: ClassVar[str] = ""
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig()
 
     c: ClassVar[ColumnCollection] = _CDescriptor()  # type: ignore[assignment]
 
@@ -94,7 +114,7 @@ class SolidServerModel(BaseModel):
 
     def model_post_init(self, __context: Any, /) -> None:
         """Wire dirty-notification callbacks for all non-frozen ClassParamDict fields."""
-        prefix = type(self)._class_param_prefix  # noqa: SLF001
+        prefix = type(self).solid_config.class_param_prefix
         for name in type(self).model_fields:
             val = getattr(self, name)
             if isinstance(val, ClassParamDict) and not val.frozen:
@@ -121,12 +141,13 @@ class SolidServerModel(BaseModel):
     def id(self) -> int | None:
         """The primary-key value for this object, or ``None`` for unsaved objects.
 
-        The concrete field name (e.g. ``subnet_id`` or ``site_id``) is declared by
-        each subclass via ``_pk_field``.
+        The concrete field name (e.g. ``subnet_id`` or ``site_id``) is declared
+        in each subclass's ``solid_config``.
         """
-        if not self._pk_field:
+        pk = type(self).solid_config.pk_field
+        if not pk:
             return None
-        return getattr(self, self._pk_field, None)
+        return getattr(self, pk, None)
 
     def assign_id(self, value: int) -> None:
         """Set the primary-key field, bypassing the frozen constraint.
@@ -138,7 +159,7 @@ class SolidServerModel(BaseModel):
         Args:
             value: The server-assigned primary-key integer.
         """
-        object.__setattr__(self, self._pk_field, value)
+        object.__setattr__(self, type(self).solid_config.pk_field, value)
 
     @property
     def id_filter(self) -> Condition:
@@ -157,7 +178,7 @@ class SolidServerModel(BaseModel):
         """
         if (obj_id := self.id) is None:
             raise ValueError(f"{type(self).__name__} has no id set")
-        col: ColumnExpr = ColumnCollection(type(self)).__getattr__(self._pk_field)
+        col: ColumnExpr = ColumnCollection(type(self)).__getattr__(type(self).solid_config.pk_field)
         return col == obj_id
 
     # ---- New-object lifecycle ------------------------------------------------
@@ -168,13 +189,17 @@ class SolidServerModel(BaseModel):
         return self._is_new
 
     def mark_new(self) -> None:
-        """Flag this object as pending creation.
+        """Flag this object as pending creation and seed dirty tracking.
 
         Called by ``Session.new()`` before the object is added to the tracked list.
-        ``Session.flush()`` will call ``subnet_create`` / ``space_create`` for any
-        tracked object whose ``is_new`` is ``True``.
+        Adds every field from ``create_fields`` that has a non-``None`` value to
+        ``_dirty`` so that ``write_params()`` serialises them on the first flush.
         """
         self._is_new = True
+        if (cf := type(self).solid_config.create_fields) is not None:
+            for name in cf:
+                if getattr(self, name, None) is not None:
+                    self._dirty.add(name)
 
     def finalize_creation(self, pk: int) -> None:
         """Record a successful server-side creation and reset write-layer state.
@@ -243,10 +268,11 @@ class SolidServerModel(BaseModel):
             transport layer.
 
         Raises:
-            TypeError: If the model has no ``_info_path`` set and
-                ``operation`` is ``'info'``.
+            TypeError: If the model has no path configured for the requested
+                ``operation``.
             ValueError: If ``operation`` is not recognised.
         """
+        paths = cls.solid_config.paths
         match operation:
             case "list":
                 params: dict[str, str] = {}
@@ -261,13 +287,13 @@ class SolidServerModel(BaseModel):
                         params[key] = str(kwargs[key])
                 if kwargs.get("no_parent_class_param"):
                     params["NO_PARENT_CLASS_PARAM"] = "1"
-                return ("GET", cls._list_path, params)
+                return ("GET", paths["list"], params)
             case "info":
-                if not cls._info_path:
+                if "info" not in paths:
                     raise TypeError(f"No fetch support for {cls.__name__}")
-                return ("GET", cls._info_path, {cls._pk_field: str(kwargs["id"])})
+                return ("GET", paths["info"], {cls.solid_config.pk_field: str(kwargs["id"])})
             case "count":
-                if not cls._count_path:
+                if "count" not in paths:
                     raise TypeError(f"No count support for {cls.__name__}")
                 params = {}
                 if (v := kwargs.get("where")) is not None:
@@ -276,7 +302,7 @@ class SolidServerModel(BaseModel):
                     params["TAGS"] = str(v)
                 if kwargs.get("no_parent_class_param"):
                     params["NO_PARENT_CLASS_PARAM"] = "1"
-                return ("GET", cls._count_path, params)
+                return ("GET", paths["count"], params)
             case _:
                 raise ValueError(f"Unknown class operation: {operation!r}")
 
@@ -302,24 +328,27 @@ class SolidServerModel(BaseModel):
             ValueError: If the object has no primary key when ``update`` or
                 ``delete`` is requested, or if ``operation`` is unrecognised.
         """
-        cls = type(self)
+        cfg = type(self).solid_config
         match operation:
             case "info":
                 if (obj_id := self.id) is None:
-                    raise ValueError(f"Cannot fetch {cls.__name__}: no id")
-                return ("GET", cls._info_path, {cls._pk_field: str(obj_id)})
+                    raise ValueError(f"Cannot fetch {type(self).__name__}: no id")
+                return ("GET", cfg.paths["info"], {cfg.pk_field: str(obj_id)})
             case "create":
-                return ("POST", cls._add_path, self.write_params())
+                params = self.write_params()
+                params['add_flag'] = 'new_only'
+                return ("POST", cfg.paths["add"], params)
             case "update":
                 if (obj_id := self.id) is None:
-                    raise ValueError(f"Cannot update {cls.__name__}: no id")
+                    raise ValueError(f"Cannot update {type(self).__name__}: no id")
                 params = self.write_params()
-                params[cls._pk_field] = str(obj_id)
-                return ("PUT", cls._add_path, params)
+                params['add_flag'] = 'edit_only'
+                params[cfg.pk_field] = str(obj_id)
+                return ("PUT", cfg.paths["add"], params)
             case "delete":
                 if (obj_id := self.id) is None:
-                    raise ValueError(f"Cannot delete {cls.__name__}: no id")
-                return ("DELETE", cls._delete_path, {cls._pk_field: str(obj_id)})
+                    raise ValueError(f"Cannot delete {type(self).__name__}: no id")
+                return ("DELETE", cfg.paths["delete"], {cfg.pk_field: str(obj_id)})
             case _:
                 raise ValueError(f"Unknown instance operation: {operation!r}")
 
@@ -426,9 +455,11 @@ class SolidServerModel(BaseModel):
 
     @staticmethod
     def _as_bool(v: object) -> bool | None:
-        """'1' → True, '0' → False, '' / None → None."""
+        """'1' → True, '0' → False, '' / None → None.  Native bool passthrough."""
         if v is None or v == "":
             return None
+        if isinstance(v, bool):
+            return v
         try:
             return bool(int(str(v)))
         except (ValueError, TypeError):

@@ -1,3 +1,4 @@
+"""Exception hierarchy for eip-pydantic."""
 from __future__ import annotations
 
 

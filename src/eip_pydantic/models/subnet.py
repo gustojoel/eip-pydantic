@@ -1,13 +1,14 @@
-import math
+"""Subnet and FreeSubnet models (``ip_block_subnet_list`` / ``ip_find_free_subnet``)."""
 from datetime import datetime
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv4Network
+from types import MappingProxyType
 from typing import Any, ClassVar, Literal, cast
 
 from pydantic import Field, model_validator
 
 from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.exceptions import InternalError
-from eip_pydantic.models.base import RowEnabled, SolidServerModel
+from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
 
 
 
@@ -19,7 +20,9 @@ class FreeSubnet(SolidServerModel):
     (lowest cost = least fragmentation).
     """
 
-    _find_free_path: ClassVar[str] = "rpc/ip_find_free_subnet"
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
+        paths=MappingProxyType({"find_free": "rpc/ip_find_free_subnet"}),
+    )
 
     start_ip_addr: IPv4Address | None = None
     start_hostaddr: IPv4Address | None = None
@@ -88,7 +91,7 @@ class FreeSubnet(SolidServerModel):
             params["use_searched_path"] = "1" if usp else "0"
         if (where := kwargs.get("where")) is not None:
             params["WHERE"] = str(where)
-        return ("OPTIONS", cls._find_free_path, params)
+        return ("OPTIONS", cls.solid_config.paths["find_free"], params)
 
     @classmethod
     def parse_response(cls, operation: str, data: Any) -> "list[FreeSubnet]":
@@ -147,32 +150,58 @@ class Subnet(SolidServerModel):
     deleting and recreating the network.
     """
 
-    _class_param_prefix: ClassVar[str | None] = "subnet"
-    tags_prefix: ClassVar[str] = "network"
-    _pk_field: ClassVar[str] = "subnet_id"
-    _list_path: ClassVar[str] = "rest/ip_block_subnet_list"
-    _info_path: ClassVar[str] = "rest/ip_block_subnet_info"
-    _count_path: ClassVar[str] = "rest/ip_block_subnet_count"
-    _add_path: ClassVar[str] = "rest/ip_subnet_add"
-    _delete_path: ClassVar[str] = "rest/ip_block_subnet_delete"
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
+        pk_field="subnet_id",
+        class_param_prefix="subnet",
+        tags_prefix="network",
+        create_fields=frozenset({
+            # Either site_id or site_name is required to define the parent Space.
+            "site_id", "site_name",
+            # Either vlsm_site_id or vlsm_site_name is required to define the VLSM Space.
+            "vlsm_site_id", "vlsm_site_name",
+            # subnet_name and subnet are required, and must be unique.
+            "subnet_name", "subnet",
+            "subnet_level", "parent_subnet_id",
+            "subnet_class_name", "class_params",
+            "is_terminal",
+            "vlmvlan_id",
+            "lock_network_broadcast",
+        }),
+        paths=MappingProxyType({
+            "list":   "rest/ip_block_subnet_list",
+            "info":   "rest/ip_block_subnet_info",
+            "count":  "rest/ip_block_subnet_count",
+            "add":    "rest/ip_subnet_add",
+            "delete": "rest/ip_block_subnet_delete",
+        }),
+    )
 
     # ------------------------------------------------------------------
     # Core identity
     # ------------------------------------------------------------------
     subnet_id: int | None = Field(None, frozen=True)
     type: Literal["block", "subnet"] | None = Field(None, frozen=True)
-    subnet_name: str | None = None
+    subnet_name: str # required
     subnet_level: int | None = Field(None, frozen=True)   # 0 = block, 1+ = subnet depth
     subnet_path: str | None = Field(None, frozen=True)
 
     # ------------------------------------------------------------------
     # IP addressing (frozen — change of range requires delete + recreate)
     # ------------------------------------------------------------------
-    start_ip_addr: IPv4Address | None = Field(None, frozen=True)
-    start_hostaddr: IPv4Address | None = Field(None, frozen=True)
-    end_ip_addr: IPv4Address | None = Field(None, frozen=True)
-    end_hostaddr: IPv4Address | None = Field(None, frozen=True)
-    subnet_size: int | None = Field(None, frozen=True)
+    subnet: IPv4Network = Field(frozen=True)
+    @property
+    def start_ip_addr(self) -> IPv4Address:  # noqa: D102
+        return self.subnet.network_address
+    @property
+    def end_ip_addr(self) -> IPv4Address:  # noqa: D102
+        return self.subnet.broadcast_address
+    @property
+    def subnet_size(self) -> int:  # noqa: D102
+        return self.subnet.num_addresses
+    @property
+    def subnet_prefix(self) -> int:  # noqa: D102
+        return self.subnet.prefixlen
+
     subnet_is_valid: bool | None = Field(None, frozen=True)
 
     # ------------------------------------------------------------------
@@ -265,6 +294,8 @@ class Subnet(SolidServerModel):
     trace_creation_usr_login: str | None = Field(None, frozen=True)
     trace_creation_origin_usr_login: str | None = Field(None, frozen=True)
 
+
+
     # ------------------------------------------------------------------
     # Write serialisation
     # ------------------------------------------------------------------
@@ -277,6 +308,8 @@ class Subnet(SolidServerModel):
             if isinstance(val, ClassParamDict):
                 continue
             match field:
+                case "subnet":
+                    pass  # emitted as subnet_addr/subnet_prefix in build_request
                 case "row_enabled":
                     out[field] = self._to_int_str(int(val) if val is not None else None)
                 case "lock_network_broadcast" | "is_terminal" | "is_in_orphan":
@@ -302,24 +335,25 @@ class Subnet(SolidServerModel):
             A ``(http_verb, path, params)`` triple.
 
         Raises:
-            ValueError: If ``start_hostaddr``, ``subnet_size``, or ``site_id``
-                is ``None`` for a ``create`` operation.
+            ValueError: If ``site_id`` is ``None`` for a ``create`` operation.
         """
         if operation != "create":
             return super().build_request(operation, **kwargs)
-        if self.start_hostaddr is None or self.subnet_size is None or self.site_id is None:
+        if self.site_id is None:
             raise ValueError(
-                "start_hostaddr, subnet_size, and site_id are required to create a Subnet",
+                "site_id is required to create a Subnet",
             )
         params = self.write_params()
-        params["subnet_addr"] = str(self.start_hostaddr)
-        params["subnet_prefix"] = str(32 - int(math.log2(self.subnet_size)))
+        params["subnet_addr"] = str(self.start_ip_addr)
+        params["subnet_prefix"] = str(self.subnet_prefix)
         params["site_id"] = str(self.site_id)
-        return ("POST", type(self)._add_path, params)  # noqa: SLF001
+        return ("POST", type(self).solid_config.paths["add"], params)
+
+
 
     @model_validator(mode="before")
     @classmethod
-    def _coerce(cls, data: Any) -> Any:  # noqa: PLR0912
+    def _coerce(cls, data: Any) -> Any:  # noqa: PLR0912, PLR0915
         if not isinstance(data, dict):
             return data
         v = cast(dict[str, Any], data)
@@ -339,13 +373,23 @@ class Subnet(SolidServerModel):
             if key in _BLOB_KEYS:
                 continue
             match key:
-                case "start_ip_addr" | "end_ip_addr" | "parent_start_ip_addr" | "parent_end_ip_addr":
+                # Consumed below to build subnet — do not write to out
+                case (
+                    "start_ip_addr" | "end_ip_addr" |
+                    "start_hostaddr" | "end_hostaddr" |
+                    "subnet_size" | "subnet_prefix"
+                ):
+                    pass
+                # Already-built IPv4Network (e.g. from model_dump() or validate_assignment
+                # re-running _coerce) — preserve it; wire-data build below overrides if available
+                case "subnet":
+                    if isinstance(val, IPv4Network):
+                        out[key] = val
+                case "parent_start_ip_addr" | "parent_end_ip_addr":
                     out[key] = cls._as_hex_ipv4(val)
-                case "start_hostaddr" | "end_hostaddr":
-                    out[key] = cls._as_dotted_ipv4(val)
                 case (
                     "errno" | "subnet_id" | "subnet_level" |
-                    "subnet_size" | "subnet_allocated_size" |
+                    "subnet_allocated_size" |
                     "subnet_used_size" | "subnet_ip_used_size" | "subnet_ip_free_size" |
                     "waiting_status" | "row_enabled" |
                     "site_id" | "tree_level" |
@@ -380,6 +424,22 @@ class Subnet(SolidServerModel):
                     else:
                         out[key] = val
 
+        subnet_addr: IPv4Address | None = None
+        if (start_ip_addr := v.get("start_ip_addr")) is not None:
+            subnet_addr = cls._as_hex_ipv4(start_ip_addr)
+        if subnet_addr is None and (start_hostaddr := v.get("start_hostaddr")) is not None:
+            subnet_addr = cls._as_dotted_ipv4(start_hostaddr)
+        subnet_prefix = cls._as_int(v.get("subnet_prefix"))
+        if subnet_prefix is None:
+            subnet_size = cls._as_int(v.get("subnet_size"))
+            if subnet_size is not None and subnet_size > 0:
+                subnet_prefix = 33 - subnet_size.bit_length()
+        if subnet_addr is not None and subnet_prefix is not None:
+            out["subnet"] = IPv4Network((subnet_addr, subnet_prefix), strict=False)
+
+        if __debug__:
+            cls._assert_wire_consistency(v, out)
+
         if not isinstance(out.get("class_params"), ClassParamDict):
             out["class_params"] = ClassParamDict.from_blobs(
                 cls._as_str(v.get("subnet_class_parameters")),
@@ -403,3 +463,54 @@ class Subnet(SolidServerModel):
             )
 
         return out
+
+
+
+    @staticmethod
+    def _assert_wire_consistency(v: dict[str, Any], out: dict[str, Any]) -> None:
+        """Assert internal consistency of decoded wire fields.
+
+        Called only under ``__debug__`` (i.e. skipped with ``python -O``).
+        All conditions should be invariants that the server never violates.
+        """
+        subnet_size    = SolidServerModel._as_int(v.get("subnet_size"))  # noqa: SLF001
+        start_addr_hex = SolidServerModel._as_hex_ipv4(v.get("start_ip_addr"))  # noqa: SLF001
+        start_addr_dot = SolidServerModel._as_dotted_ipv4(v.get("start_hostaddr"))  # noqa: SLF001
+        end_addr_hex   = SolidServerModel._as_hex_ipv4(v.get("end_ip_addr"))  # noqa: SLF001
+        end_addr_dot   = SolidServerModel._as_dotted_ipv4(v.get("end_hostaddr"))  # noqa: SLF001
+
+        if start_addr_hex is not None and start_addr_dot is not None:
+            assert start_addr_hex == start_addr_dot, (
+                f"start_ip_addr {start_addr_hex} disagrees with start_hostaddr {start_addr_dot}"
+            )
+        if end_addr_hex is not None and end_addr_dot is not None:
+            assert end_addr_hex == end_addr_dot, (
+                f"end_ip_addr {end_addr_hex} disagrees with end_hostaddr {end_addr_dot}"
+            )
+        if start_addr_hex is not None and subnet_size is not None and subnet_size > 0:
+            end_addr = end_addr_dot if end_addr_dot is not None else end_addr_hex
+            if end_addr is not None:
+                expected_end = IPv4Address(int(start_addr_hex) + subnet_size - 1)
+                assert end_addr == expected_end, (
+                    f"end address {end_addr} != start {start_addr_hex} + size {subnet_size} - 1 = {expected_end}"
+                )
+        explicit_prefix = SolidServerModel._as_int(v.get("subnet_prefix"))  # noqa: SLF001
+        if explicit_prefix is not None and subnet_size is not None and subnet_size > 0:
+            expected_size = 2 ** (32 - explicit_prefix)
+            assert subnet_size == expected_size, (
+                f"subnet_size {subnet_size} inconsistent with subnet_prefix {explicit_prefix} "
+                f"(expected {expected_size})"
+            )
+        parent_start: object = out.get("parent_start_ip_addr")
+        parent_end:   object = out.get("parent_end_ip_addr")
+        parent_size:  object = out.get("parent_subnet_size")
+        if (
+            isinstance(parent_start, IPv4Address) and int(parent_start) != 0 and
+            isinstance(parent_end,   IPv4Address) and
+            isinstance(parent_size,  int)         and parent_size > 0
+        ):
+            expected_parent_end = IPv4Address(int(parent_start) + parent_size - 1)
+            assert parent_end == expected_parent_end, (
+                f"parent_end_ip_addr {parent_end} != parent_start {parent_start} "
+                f"+ size {parent_size} - 1 = {expected_parent_end}"
+            )

@@ -1,11 +1,13 @@
+"""Pool model (``ip_pool_list`` / ``ip_pool_info``)."""
 from datetime import datetime
 from ipaddress import IPv4Address
+from types import MappingProxyType
 from typing import Any, ClassVar, cast
 
 from pydantic import Field, model_validator
 
 from eip_pydantic.class_params import ClassParamDict
-from eip_pydantic.models.base import RowEnabled, SolidServerModel
+from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
 
 
 
@@ -23,20 +25,33 @@ class Pool(SolidServerModel):
     server-managed state.  Changing the address range requires delete + recreate.
     """
 
-    _class_param_prefix: ClassVar[str | None] = "pool"
-    tags_prefix: ClassVar[str] = "pool"
-    _pk_field: ClassVar[str] = "pool_id"
-    _list_path: ClassVar[str] = "rest/ip_pool_list"
-    _info_path: ClassVar[str] = "rest/ip_pool_info"
-    _count_path: ClassVar[str] = "rest/ip_pool_count"
-    _add_path: ClassVar[str] = "rest/ip_pool_add"
-    _delete_path: ClassVar[str] = "rest/ip_pool_delete"
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
+        pk_field="pool_id",
+        class_param_prefix="pool",
+        tags_prefix="pool",
+        create_fields=frozenset({
+            # placement: subnet_id required; site_id/site_name also accepted by ip_pool_add
+            "subnet_id", "site_id", "site_name",
+            "start_hostaddr", "end_hostaddr",
+            # metadata
+            "pool_name", "pool_class_name", "class_params",
+            # behaviour flags
+            "pool_read_only",
+        }),
+        paths=MappingProxyType({
+            "list":   "rest/ip_pool_list",
+            "info":   "rest/ip_pool_info",
+            "count":  "rest/ip_pool_count",
+            "add":    "rest/ip_pool_add",
+            "delete": "rest/ip_pool_delete",
+        }),
+    )
 
     # ------------------------------------------------------------------
     # Core identity
     # ------------------------------------------------------------------
     pool_id: int | None = Field(None, frozen=True)
-    pool_name: str | None = None
+    pool_name: str # required
     pool_read_only: bool | None = None     # if True, IPs in pool cannot be assigned
 
     # ------------------------------------------------------------------
@@ -118,6 +133,8 @@ class Pool(SolidServerModel):
             if isinstance(val, ClassParamDict):
                 continue
             match field:
+                case "start_hostaddr" | "end_hostaddr":
+                    pass  # renamed to start_addr/end_addr in build_request
                 case "pool_read_only":
                     out[field] = self._to_bool_str(val)
                 case "row_enabled":
@@ -147,7 +164,7 @@ class Pool(SolidServerModel):
         params["start_addr"] = str(self.start_hostaddr)
         params["end_addr"] = str(self.end_hostaddr)
         params["subnet_id"] = str(self.subnet_id)
-        return ("POST", type(self)._add_path, params)  # noqa: SLF001
+        return ("POST", type(self).solid_config.paths["add"], params)
 
     @model_validator(mode="before")
     @classmethod

@@ -1,6 +1,7 @@
 # pyright: reportUnusedImport=false
 
 import os
+from ipaddress import *  # pyright: ignore[reportWildcardImportFromLibrary] # noqa: F403
 
 from dotenv import load_dotenv
 

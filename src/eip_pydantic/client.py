@@ -126,7 +126,7 @@ class EipClient(_BaseEipClient):
         """
         response = self._http.post(path, json=body, params=params or None)
         self._raise_for_status(response)
-        return response.json()
+        return response.json() if response.content else []
 
     def put(self, path: str, body: Any = None, **params: Any) -> Any:
         """Send a PUT request and return the parsed JSON response.
@@ -146,7 +146,7 @@ class EipClient(_BaseEipClient):
         """
         response = self._http.put(path, json=body, params=params or None)
         self._raise_for_status(response)
-        return response.json()
+        return response.json() if response.content else []
 
     def delete(self, path: str, **params: Any) -> Any:
         """Send a DELETE request and return the parsed JSON response.
@@ -165,7 +165,7 @@ class EipClient(_BaseEipClient):
         """
         response = self._http.delete(path, params=params or None)
         self._raise_for_status(response)
-        return response.json()
+        return response.json() if response.content else []
 
     def options(self, path: str, **params: Any) -> Any:
         """Send an OPTIONS request and return the parsed JSON response.
@@ -269,7 +269,7 @@ class AsyncEipClient(_BaseEipClient):
         """
         response = await self._http.post(path, json=body, params=params or None)
         self._raise_for_status(response)
-        return response.json()
+        return response.json() if response.content else []
 
     async def put(self, path: str, body: Any = None, **params: Any) -> Any:
         """Send a PUT request and return the parsed JSON response.
@@ -289,7 +289,7 @@ class AsyncEipClient(_BaseEipClient):
         """
         response = await self._http.put(path, json=body, params=params or None)
         self._raise_for_status(response)
-        return response.json()
+        return response.json() if response.content else []
 
     async def delete(self, path: str, **params: Any) -> Any:
         """Send a DELETE request and return the parsed JSON response.
@@ -308,7 +308,7 @@ class AsyncEipClient(_BaseEipClient):
         """
         response = await self._http.delete(path, params=params or None)
         self._raise_for_status(response)
-        return response.json()
+        return response.json() if response.content else []
 
     async def options(self, path: str, **params: Any) -> Any:
         """Send an OPTIONS request and return the parsed JSON response.

@@ -1,4 +1,4 @@
-"""Space model (``ip_site_list`` / ``ip_site_info``)."""
+"""Vrf model (``vrfobject_list`` / ``vrfobject_info``)."""
 from datetime import datetime
 from types import MappingProxyType
 from typing import Any, ClassVar, cast
@@ -10,67 +10,49 @@ from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerM
 
 
 
-class Space(SolidServerModel):
-    """An EfficientIP IPAM space (``ip_site_list`` / ``ip_site_info``).
+class Vrf(SolidServerModel):
+    """An EfficientIP VRF object (``vrfobject_list`` / ``vrfobject_info``).
 
-    A space is the top-level container in the IPAM hierarchy.  Spaces may be
-    nested (parent/child) and can contain IPv4 and IPv6 networks.
+    VRF objects represent Virtual Routing and Forwarding instances.  They are
+    stand-alone objects not nested within a Space hierarchy.
 
     Mutable fields (writable via ``Session.flush()``):
-        ``site_name``, ``site_description``, ``site_class_name``,
-        ``class_params``, ``row_enabled``.
+        ``vrfobject_name``, ``vrfobject_rd_id``, ``vrfobject_comment``,
+        ``vrfobject_class_name``, ``class_params``, ``row_enabled``.
 
     All other fields are frozen and reflect server-managed state.
     """
 
     solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
-        pk_field="site_id",
-        class_param_prefix="site",
-        tags_prefix="site",
+        pk_field="vrfobject_id",
+        class_param_prefix="vrfobject",
+        tags_prefix="vrfobject",
         create_fields=frozenset({
-            "site_name", "site_description", "site_class_name",
-            "class_params", "row_enabled", "parent_site_id",
-            "parent_site_name", "site_is_template",
+            "vrfobject_name", "vrfobject_rd_id", "vrfobject_comment",
+            "vrfobject_class_name", "class_params", "row_enabled",
         }),
         paths=MappingProxyType({
-            "list":   "rest/ip_site_list",
-            "info":   "rest/ip_site_info",
-            "count":  "rest/ip_site_count",
-            "add":    "rest/ip_site_add",
-            "delete": "rest/ip_site_delete",
+            "list":   "rest/vrfobject_list",
+            "info":   "rest/vrfobject_info",
+            "count":  "rest/vrfobject_count",
+            "add":    "rest/vrf_vrfobject_add",
+            "delete": "rest/vrf_vrfobject_delete",
         }),
     )
 
     # ------------------------------------------------------------------
     # Core identity
     # ------------------------------------------------------------------
-    site_id: int | None = Field(None, frozen=True)
-    site_name: str # required
-    site_description: str | None = None
-    site_is_template: bool | None = Field(None, frozen=True)
+    vrfobject_id: int | None = Field(None, frozen=True)
+    vrfobject_name: str  # required, unique, max 128
+    vrfobject_rd_id: str | None = None       # Route Distinguisher (RFC 4364)
+    vrfobject_comment: str | None = None     # description / free text
 
     # ------------------------------------------------------------------
     # Class system
     # ------------------------------------------------------------------
-    site_class_name: str | None = None
+    vrfobject_class_name: str | None = None
     class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)
-    parent_site_class_params: ClassParamDict | None = Field(None, frozen=True)  # _info only
-
-    # ------------------------------------------------------------------
-    # Hierarchy
-    # ------------------------------------------------------------------
-    parent_site_id: int | None = Field(None, frozen=True)
-    parent_site_name: str | None = Field(None, frozen=True)
-    parent_site_class_name: str | None = Field(None, frozen=True)
-    tree_level: int | None = Field(None, frozen=True)
-    tree_path: str | None = Field(None, frozen=True)
-    tree_id_path: str | None = Field(None, frozen=True)
-
-    # ------------------------------------------------------------------
-    # VLSM cross-space linkage
-    # ------------------------------------------------------------------
-    vlsm_site_id: int | None = Field(None, frozen=True)
-    vlsm_site_name: str | None = Field(None, frozen=True)
 
     # ------------------------------------------------------------------
     # Status
@@ -79,7 +61,7 @@ class Space(SolidServerModel):
     multistatus: str | None = Field(None, frozen=True)
 
     # ------------------------------------------------------------------
-    # Audit trail
+    # Audit trail (frozen)
     # ------------------------------------------------------------------
     trace_creation_date: datetime | None = Field(None, frozen=True)
     trace_last_update_date: datetime | None = Field(None, frozen=True)
@@ -95,8 +77,8 @@ class Space(SolidServerModel):
     # ------------------------------------------------------------------
 
     def write_params(self) -> dict[str, str]:
-        """Serialise dirty mutable fields to the wire format expected by ``ip_site_add``."""
-        out = super().write_params()   # handles class_params → site_class_parameters etc.
+        """Serialise dirty mutable fields to the wire format expected by ``vrf_vrfobject_add``."""
+        out = super().write_params()   # handles class_params → vrfobject_class_parameters etc.
         for field in self._dirty:
             val = getattr(self, field)
             if isinstance(val, ClassParamDict):
@@ -104,25 +86,37 @@ class Space(SolidServerModel):
             match field:
                 case "row_enabled":
                     out[field] = self._to_int_str(int(val) if val is not None else None)
-                case "site_is_template":
-                    out[field] = self._to_bool_str(val)
                 case _:
                     out[field] = "" if val is None else str(val)
         return out
 
+    def build_request(
+        self,
+        operation: str,
+        **kwargs: Any,
+    ) -> tuple[str, str, dict[str, str]]:
+        """Build an HTTP request descriptor, omitting ``add_flag`` on ``create``.
+
+        The ``vrf_vrfobject_add`` endpoint defaults to ``new_edit``, which is the
+        correct behaviour for VRF creation — passing ``new_only`` would fail if the
+        object already exists after a partial flush.
+        """
+        if operation != "create":
+            return super().build_request(operation, **kwargs)
+        params = self.write_params()
+        return ("POST", type(self).solid_config.paths["add"], params)
+
     @model_validator(mode="before")
     @classmethod
-    def _coerce(cls, data: Any) -> Any:  # noqa: PLR0912
+    def _coerce(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
         v = cast(dict[str, Any], data)
 
         _BLOB_KEYS = frozenset({  # noqa: N806
-            "site_class_parameters",
-            "site_class_parameters_properties",
-            "site_class_parameters_inheritance_source",
-            "parent_site_class_parameters",
-            "parent_site_class_parameters_properties",
+            "vrfobject_class_parameters",
+            "vrfobject_class_parameters_properties",
+            "vrfobject_class_parameters_inheritance_source",
         })
 
         out: dict[str, Any] = {}
@@ -130,16 +124,13 @@ class Space(SolidServerModel):
             if key in _BLOB_KEYS:
                 continue
             match key:
-                case "errno" | "site_id" | "tree_level" | "row_enabled":
+                case "errno" | "vrfobject_id" | "row_enabled":
                     out[key] = cls._as_int(val)
                 case (
-                    "parent_site_id" |
-                    "vlsm_site_id" |
-                    "trace_creation_usr_id" | "trace_creation_origin_usr_id"
+                    "trace_creation_usr_id" |
+                    "trace_creation_origin_usr_id"
                 ):
                     out[key] = cls._as_nz_int(val)
-                case "site_is_template":
-                    out[key] = cls._as_bool(val)
                 case "trace_creation_date" | "trace_last_update_date":
                     out[key] = cls._as_datetime(val)
                 case _:
@@ -152,17 +143,10 @@ class Space(SolidServerModel):
 
         if not isinstance(out.get("class_params"), ClassParamDict):
             out["class_params"] = ClassParamDict.from_blobs(
-                cls._as_str(v.get("site_class_parameters")),
-                cls._as_str(v.get("site_class_parameters_properties")),
-                cls._as_str(v.get("site_class_parameters_inheritance_source")),
-                api_prefix="site",
-            )
-        if "parent_site_class_parameters" in v or "parent_site_class_parameters_properties" in v:
-            out["parent_site_class_params"] = ClassParamDict.from_blobs(
-                cls._as_str(v.get("parent_site_class_parameters")),
-                cls._as_str(v.get("parent_site_class_parameters_properties")),
-                api_prefix="site",
-                frozen=True,
+                cls._as_str(v.get("vrfobject_class_parameters")),
+                cls._as_str(v.get("vrfobject_class_parameters_properties")),
+                cls._as_str(v.get("vrfobject_class_parameters_inheritance_source")),
+                api_prefix="vrfobject",
             )
 
         return out

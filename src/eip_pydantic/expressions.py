@@ -1,52 +1,6 @@
 """WHERE-clause and ORDER BY expression builder.
 
-This module provides a SQLAlchemy-style expression API so that ``Session.list()``
-filter and sort arguments can be written as Python expressions instead of raw
-strings.  Each model class exposes a ``.c`` accessor that produces typed column
-expressions.
-
-**Real model fields** (declared in ``model_fields``) map directly to the API
-field name::
-
-    Subnet.c.subnet_name == 'prod-dmz'
-    # → WHERE=subnet_name='prod-dmz'   (no TAGS parameter needed)
-
-**Tagged class parameters** (any attribute not declared on the model) map to
-``tag_{prefix}_{name}`` and automatically carry the TAGS requirement that
-``Session.list()`` injects before building the request::
-
-    Subnet.c.foobar == 'baz'
-    # → WHERE=tag_network_foobar='baz'  TAGS=network.foobar
-
-The TAGS prefix is declared on each model as ``tags_prefix`` (e.g. ``"network"``
-for ``Subnet``, ``"site"`` for ``Space``).
-
-Expressions compose naturally with ``&`` / ``|``::
-
-    (Subnet.c.site_id == '7') & (Subnet.c.foobar == 'baz')
-    # → WHERE=(site_id='7') and (tag_network_foobar='baz')
-    #    TAGS=network.foobar
-
-    (Space.c.site_name == 'prod') | (Space.c.site_name == 'staging')
-    # → WHERE=(site_name='prod') or (site_name='staging')
-
-ORDER BY expressions are produced via ``.asc()`` / ``.desc()``::
-
-    s.list(Subnet, orderby=Subnet.c.subnet_name.asc())
-    # → ORDERBY=subnet_name ASC
-
-    s.list(Subnet, orderby=Subnet.c.priority.desc())
-    # → ORDERBY=tag_network_priority DESC   TAGS=network.priority
-
-All values are coerced to strings and single-quoted for the API.  Internal
-single quotes are doubled (``'`` → ``''``).  Integer, bool, and ``None``
-values are all converted via ``str()``.
-
-A ``Condition`` or ``OrderByExpr`` can always be inspected::
-
-    cond = Subnet.c.foobar == 'baz'
-    str(cond)              # "tag_network_foobar='baz'"
-    cond.required_tags     # frozenset({'network.foobar'})
+.. include:: ../../docs/expressions.md
 """
 
 from collections.abc import Iterable
@@ -196,32 +150,18 @@ class ColumnExpr:
 
     Operator summary (``f`` = field name, ``v`` = quoted value):
 
-    +----------------------------------+---------------------------+
-    | Python                           | API string                |
-    +==================================+===========================+
-    | ``Model.c.field == value``       | ``f='v'``                 |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field != value``       | ``f!='v'``                |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field < value``        | ``f<'v'``                 |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field <= value``       | ``f<='v'``                |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field > value``        | ``f>'v'``                 |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field >= value``       | ``f>='v'``                |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field.like('%val%')``  | ``f like '%val%'``        |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field.in_(['a','b'])`` | ``f in ('a', 'b')``       |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field.is_null()``      | ``f=''``                  |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field.asc()``          | ``f ASC``                 |
-    +----------------------------------+---------------------------+
-    | ``Model.c.field.desc()``         | ``f DESC``                |
-    +----------------------------------+---------------------------+
-    """
+    - ``Model.c.field == value`` → ``f='v'``
+    - ``Model.c.field != value`` → ``f!='v'``
+    - ``Model.c.field < value`` → ``f<'v'``
+    - ``Model.c.field <= value`` → ``f<='v'``
+    - ``Model.c.field > value`` → ``f>'v'``
+    - ``Model.c.field >= value`` → ``f>='v'``
+    - ``Model.c.field.like('%val%')`` → ``f like '%val%'``
+    - ``Model.c.field.in_(['a','b'])`` → ``f in ('a', 'b')``
+    - ``Model.c.field.is_null()`` → ``f=''``
+    - ``Model.c.field.asc()`` → ``f ASC``
+    - ``Model.c.field.desc()`` → ``f DESC``
+"""
 
     def __init__(self, field_name: str, required_tags: frozenset[str] = frozenset()) -> None:
         self._field_name = field_name
@@ -407,7 +347,7 @@ class ColumnCollection:
         model_cls = self._model_cls
         if name in model_cls.model_fields:
             return ColumnExpr(name)
-        prefix = model_cls.tags_prefix
+        prefix = model_cls.solid_config.tags_prefix
         if not prefix:
             return ColumnExpr(name)
         return ColumnExpr(f"tag_{prefix}_{name}", frozenset({f"{prefix}.{name}"}))

@@ -1,11 +1,13 @@
+"""IpAddress model (``ip_address_list`` / ``ip_address_info``)."""
 from datetime import datetime
 from ipaddress import IPv4Address
+from types import MappingProxyType
 from typing import Any, ClassVar, cast
 
 from pydantic import Field, model_validator
 
 from eip_pydantic.class_params import ClassParamDict
-from eip_pydantic.models.base import SolidServerModel
+from eip_pydantic.models.base import SolidServerConfig, SolidServerModel
 
 
 
@@ -27,14 +29,24 @@ class IpAddress(SolidServerModel):
     reallocate an address, delete and recreate the record.
     """
 
-    _class_param_prefix: ClassVar[str | None] = "ip"
-    tags_prefix: ClassVar[str] = "ip"
-    _pk_field: ClassVar[str] = "ip_id"
-    _list_path: ClassVar[str] = "rest/ip_address_list"
-    _info_path: ClassVar[str] = "rest/ip_address_info"
-    _count_path: ClassVar[str] = "rest/ip_address_count"
-    _add_path: ClassVar[str] = "rest/ip_add"
-    _delete_path: ClassVar[str] = "rest/ip_delete"
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
+        pk_field="ip_id",
+        class_param_prefix="ip",
+        tags_prefix="ip",
+        create_fields=frozenset({
+            "site_id", "site_name",   # site_name: alternative to site_id per ip_add API
+            "hostaddr",
+            "subnet_id",
+            "name", "mac_addr", "ip_class_name", "class_params",
+        }),
+        paths=MappingProxyType({
+            "list":   "rest/ip_address_list",
+            "info":   "rest/ip_address_info",
+            "count":  "rest/ip_address_count",
+            "add":    "rest/ip_add",
+            "delete": "rest/ip_delete",
+        }),
+    )
 
     # ------------------------------------------------------------------
     # Record type and free-range fields
@@ -205,7 +217,7 @@ class IpAddress(SolidServerModel):
         params["site_id"] = str(self.site_id)
         if self.subnet_id is not None:
             params["subnet_id"] = str(self.subnet_id)
-        return ("POST", type(self)._add_path, params)  # noqa: SLF001
+        return ("POST", type(self).solid_config.paths["add"], params)
 
     @model_validator(mode="before")
     @classmethod

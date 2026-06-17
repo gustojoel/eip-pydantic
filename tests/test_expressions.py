@@ -39,19 +39,19 @@ def test_ne_real_field() -> None:
 
 
 def test_lt_real_field() -> None:
-    assert str(Subnet.c.subnet_size < 256) == "subnet_size<'256'"
+    assert str(Subnet.c.subnet_id < 256) == "subnet_id<'256'"
 
 
 def test_le_real_field() -> None:
-    assert str(Subnet.c.subnet_size <= 256) == "subnet_size<='256'"
+    assert str(Subnet.c.subnet_id <= 256) == "subnet_id<='256'"
 
 
 def test_gt_real_field() -> None:
-    assert str(Subnet.c.subnet_size > 0) == "subnet_size>'0'"
+    assert str(Subnet.c.subnet_id > 0) == "subnet_id>'0'"
 
 
 def test_ge_real_field() -> None:
-    assert str(Subnet.c.subnet_size >= 128) == "subnet_size>='128'"
+    assert str(Subnet.c.subnet_id >= 128) == "subnet_id>='128'"
 
 
 def test_like() -> None:
@@ -74,7 +74,7 @@ def test_asc() -> None:
 
 
 def test_desc() -> None:
-    assert str(Subnet.c.subnet_size.desc()) == "subnet_size DESC"
+    assert str(Subnet.c.subnet_id.desc()) == "subnet_id DESC"
 
 
 def test_single_quote_escaping() -> None:

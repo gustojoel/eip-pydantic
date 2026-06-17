@@ -13,11 +13,12 @@ Key coercion facts verified here:
 """
 
 from datetime import UTC, datetime
-from ipaddress import IPv4Address
+from ipaddress import IPv4Address, IPv4Network
 
 import httpx
 import pytest
 import respx
+from pydantic import ValidationError
 
 from eip_pydantic import Session
 from eip_pydantic.models.base import RowEnabled
@@ -179,6 +180,17 @@ def test_subnet_hex_ip_start() -> None:
     assert s.start_ip_addr == IPv4Address("10.0.2.0")
 
 
+def test_subnet_network_is_derived_from_wire_fields() -> None:
+    s = Subnet.model_validate(_SUBNET_LIST_ROW)
+    assert s.subnet == IPv4Network("10.0.2.0/24")
+
+
+def test_subnet_network_roundtrips_via_model_dump() -> None:
+    s = Subnet.model_validate(_SUBNET_LIST_ROW)
+    roundtripped = Subnet.model_validate(s.model_dump())
+    assert roundtripped.subnet == s.subnet
+
+
 def test_subnet_hex_ip_end() -> None:
     s = Subnet.model_validate(_SUBNET_LIST_ROW)
     assert s.end_ip_addr == IPv4Address("10.0.2.255")
@@ -200,25 +212,11 @@ def test_subnet_hex_ip_all_zeros_is_zero_address() -> None:
     assert s.parent_start_ip_addr == IPv4Address("0.0.0.0")
 
 
-def test_subnet_hex_ip_8char_dotted_not_confused() -> None:
-    # "10.0.2.0" is 8 chars — must NOT be parsed as hex; uses dotted-decimal path
-    s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    assert s.start_hostaddr == IPv4Address("10.0.2.0")
-
-
-# ---------------------------------------------------------------------------
-# IP address coercion — dotted-decimal fields (start_hostaddr, end_hostaddr)
-# ---------------------------------------------------------------------------
-
-
-def test_subnet_dotted_ip_start_hostaddr() -> None:
-    s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    assert s.start_hostaddr == IPv4Address("10.0.2.0")
-
-
-def test_subnet_dotted_ip_end_hostaddr() -> None:
-    s = Subnet.model_validate(_SUBNET_LIST_ROW)
-    assert s.end_hostaddr == IPv4Address("10.0.2.255")
+def test_subnet_start_hostaddr_dotted_builds_correct_subnet() -> None:
+    # "10.0.2.0" is 8 chars but dotted-decimal — must not be confused with hex
+    row = {k: v for k, v in _SUBNET_LIST_ROW.items() if k != "start_ip_addr"}
+    s = Subnet.model_validate(row)
+    assert s.subnet.network_address == IPv4Address("10.0.2.0")
 
 
 # ---------------------------------------------------------------------------
@@ -516,12 +514,52 @@ def test_subnet_list_sends_limit_and_orderby() -> None:
     assert params["ORDERBY"] == "start_ip_addr ASC"
 
 
-def test_subnet_build_request_create_missing_fields_raises() -> None:
-    sn = Subnet.model_validate({"subnet_id": "42"})
-    with pytest.raises(ValueError, match="start_hostaddr"):
+def test_subnet_build_request_create_missing_site_id_raises() -> None:
+    sn = Subnet(subnet_name="test-net", subnet=IPv4Network("10.0.0.0/24"))
+    with pytest.raises(ValueError, match="site_id"):
         sn.build_request("create")
 
 
 def test_subnet_coerce_non_dict_passthrough() -> None:
     sentinel = object()
     assert Subnet._coerce(sentinel) is sentinel
+
+
+# ---------------------------------------------------------------------------
+# _coerce consistency assertions — server data that should never occur
+# ---------------------------------------------------------------------------
+
+
+def test_coerce_asserts_start_ip_addr_disagrees_with_start_hostaddr() -> None:
+    # start_ip_addr decodes to 10.0.2.0 but start_hostaddr says 10.0.3.0
+    row = {**_SUBNET_LIST_ROW, "start_ip_addr": "0a000200", "start_hostaddr": "10.0.3.0"}
+    with pytest.raises(ValidationError, match="start_ip_addr.*disagrees.*start_hostaddr"):
+        Subnet.model_validate(row)
+
+
+def test_coerce_asserts_end_ip_addr_disagrees_with_end_hostaddr() -> None:
+    # end_ip_addr decodes to 10.0.2.255 but end_hostaddr says 10.0.3.255
+    row = {**_SUBNET_LIST_ROW, "end_ip_addr": "0a0002ff", "end_hostaddr": "10.0.3.255"}
+    with pytest.raises(ValidationError, match="end_ip_addr.*disagrees.*end_hostaddr"):
+        Subnet.model_validate(row)
+
+
+def test_coerce_asserts_end_inconsistent_with_start_plus_size() -> None:
+    # subnet is 10.0.2.0/24 (256 addrs), so end should be 10.0.2.255, not 10.0.3.0
+    row = {**_SUBNET_LIST_ROW, "end_ip_addr": "0a000300", "end_hostaddr": "10.0.3.0"}
+    with pytest.raises(ValidationError, match="end address"):
+        Subnet.model_validate(row)
+
+
+def test_coerce_asserts_prefix_size_mismatch() -> None:
+    # subnet_prefix=25 → 128 addresses, but subnet_size says 256
+    row = {**_SUBNET_LIST_ROW, "subnet_prefix": "25"}
+    with pytest.raises(ValidationError, match="subnet_size.*inconsistent.*subnet_prefix"):
+        Subnet.model_validate(row)
+
+
+def test_coerce_asserts_parent_end_inconsistent_with_parent_start_plus_size() -> None:
+    # parent is 10.0.0.0/16 (65536 addrs → end 10.0.255.255), but end says 10.1.0.0
+    row = {**_CHILD_SUBNET_ROW, "parent_end_ip_addr": "0a010000"}
+    with pytest.raises(ValidationError, match="parent_end_ip_addr"):
+        Subnet.model_validate(row)

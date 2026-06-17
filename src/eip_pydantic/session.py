@@ -5,7 +5,7 @@ import contextlib
 from collections.abc import Iterable
 from ipaddress import IPv4Address
 from types import TracebackType
-from typing import Any, Self, TypeVar, cast
+from typing import Any, NamedTuple, Self, TypeVar, cast
 
 import httpx
 
@@ -21,6 +21,29 @@ T = TypeVar("T", bound=SolidServerModel)
 
 _Cache = dict[tuple[type[SolidServerModel], int], SolidServerModel]
 _DEFAULT_TIMEOUT = httpx.Timeout(30.0)
+
+
+class FlushRecord(NamedTuple):
+    """Record of one HTTP call made during ``flush()``.
+
+    Captured regardless of success or failure so that callers can inspect
+    ``session.last_flush`` after any exception.
+
+    Attributes:
+        obj: The model instance that was being written.
+        verb: HTTP verb used (``"POST"``, ``"PUT"``).
+        path: API path (e.g. ``"rest/ip_site_add"``).
+        params: Query / body parameters sent.
+        response: Raw API response dict, or ``None`` if the call failed.
+        error: Exception raised by the call, or ``None`` on success.
+    """
+
+    obj: SolidServerModel
+    verb: str
+    path: str
+    params: dict[str, str]
+    response: Any
+    error: BaseException | None
 
 
 class BaseSession:
@@ -40,6 +63,7 @@ class BaseSession:
     def __init__(self) -> None:
         self._new: list[SolidServerModel] = []
         self._cache: _Cache = {}
+        self.last_flush: list[FlushRecord] = []
 
     def new(self, obj: SolidServerModel) -> None:
         """Register a new (unsaved) object for creation on ``flush()``.
@@ -57,6 +81,8 @@ class BaseSession:
         """Instantiate ``cls`` with ``kwargs``, register it for creation, and return it.
 
         Equivalent to ``obj = cls(**kwargs); session.new(obj)`` but in one call.
+        When the model defines ``_create_fields``, only those field names are
+        accepted; any extra key raises ``TypeError`` before the object is built.
 
         Args:
             cls: The model class to create (e.g. ``Space``, ``Subnet``).
@@ -64,7 +90,13 @@ class BaseSession:
 
         Returns:
             The new model instance, already registered for POST on ``flush()``.
+
+        Raises:
+            TypeError: If any kwarg is not in ``cls._create_fields``.
         """
+        cf = cls.solid_config.create_fields
+        if cf is not None and (unknown := kwargs.keys() - cf):
+            raise TypeError(f"Fields not allowed at creation for {cls.__name__}: {sorted(unknown)}")
         obj = cls(**kwargs)
         self.new(obj)
         return obj
@@ -314,7 +346,7 @@ class Session(BaseSession):
 
         Args:
             cls: The model class to fetch (e.g. ``Space``, ``Subnet``).
-            pk: The primary-key integer for the object.
+            id: The primary-key integer for the object.
 
         Returns:
             The cached or freshly fetched instance of ``cls``.
@@ -428,7 +460,7 @@ class Session(BaseSession):
         with contextlib.suppress(ValueError):
             self._new.remove(obj)
 
-    def flush(self) -> None:
+    def flush(self) -> builtins.list[SolidServerModel]:
         """Create or update all objects that are new or dirty.
 
         Pass 1 — iterates ``_new`` in insertion order and POSTs each object
@@ -440,18 +472,52 @@ class Session(BaseSession):
 
         After each successful write the object's state is reset via
         ``apply_response()``.
+
+        Returns:
+            The list of objects that were written (created or updated).
+
+        Raises:
+            Any exception raised by the underlying HTTP client.  ``last_flush``
+            is updated before the exception propagates so the caller can inspect
+            what was attempted.
         """
-        for obj in self._new:
-            if obj.is_new:
-                verb, path, params = obj.build_request("create")
-                raw = self._dispatch(verb, path, params)
-                obj.apply_response("create", raw)
-                self._put_cache(obj)
-        for obj in self._cache.values():
-            if obj.is_dirty:
-                verb, path, params = obj.build_request("update")
-                raw = self._dispatch(verb, path, params)
-                obj.apply_response("update", raw)
+        records: list[FlushRecord] = []
+        flushed: list[SolidServerModel] = []
+        try:
+            for obj in self._new:
+                if obj.is_new:
+                    verb, path, params = obj.build_request("create")
+                    raw: Any = None
+                    err: BaseException | None = None
+                    try:
+                        raw = self._dispatch(verb, path, params)
+                    except BaseException as exc:
+                        err = exc
+                        records.append(FlushRecord(obj, verb, path, params, raw, err))
+                        self.last_flush = records
+                        raise
+                    records.append(FlushRecord(obj, verb, path, params, raw, err))
+                    obj.apply_response("create", raw)
+                    self._put_cache(obj)
+                    flushed.append(obj)
+            for obj in self._cache.values():
+                if obj.is_dirty:
+                    verb, path, params = obj.build_request("update")
+                    raw = None
+                    err = None
+                    try:
+                        raw = self._dispatch(verb, path, params)
+                    except BaseException as exc:
+                        err = exc
+                        records.append(FlushRecord(obj, verb, path, params, raw, err))
+                        self.last_flush = records
+                        raise
+                    records.append(FlushRecord(obj, verb, path, params, raw, err))
+                    obj.apply_response("update", raw)
+                    flushed.append(obj)
+        finally:
+            self.last_flush = records
+        return flushed
 
     # ---- Context manager ----------------------------------------------------
 
@@ -727,19 +793,54 @@ class AsyncSession(BaseSession):
         with contextlib.suppress(ValueError):
             self._new.remove(obj)
 
-    async def flush(self) -> None:
-        """Create or update all objects that are new or dirty."""
-        for obj in self._new:
-            if obj.is_new:
-                verb, path, params = obj.build_request("create")
-                raw = await self._dispatch(verb, path, params)
-                obj.apply_response("create", raw)
-                self._put_cache(obj)
-        for obj in self._cache.values():
-            if obj.is_dirty:
-                verb, path, params = obj.build_request("update")
-                raw = await self._dispatch(verb, path, params)
-                obj.apply_response("update", raw)
+    async def flush(self) -> builtins.list[SolidServerModel]:
+        """Create or update all objects that are new or dirty.
+
+        Returns:
+            The list of objects that were written (created or updated).
+
+        Raises:
+            Any exception raised by the underlying HTTP client.  ``last_flush``
+            is updated before the exception propagates so the caller can inspect
+            what was attempted.
+        """
+        records: list[FlushRecord] = []
+        flushed: list[SolidServerModel] = []
+        try:
+            for obj in self._new:
+                if obj.is_new:
+                    verb, path, params = obj.build_request("create")
+                    raw: Any = None
+                    err: BaseException | None = None
+                    try:
+                        raw = await self._dispatch(verb, path, params)
+                    except BaseException as exc:
+                        err = exc
+                        records.append(FlushRecord(obj, verb, path, params, raw, err))
+                        self.last_flush = records
+                        raise
+                    records.append(FlushRecord(obj, verb, path, params, raw, err))
+                    obj.apply_response("create", raw)
+                    self._put_cache(obj)
+                    flushed.append(obj)
+            for obj in self._cache.values():
+                if obj.is_dirty:
+                    verb, path, params = obj.build_request("update")
+                    raw = None
+                    err = None
+                    try:
+                        raw = await self._dispatch(verb, path, params)
+                    except BaseException as exc:
+                        err = exc
+                        records.append(FlushRecord(obj, verb, path, params, raw, err))
+                        self.last_flush = records
+                        raise
+                    records.append(FlushRecord(obj, verb, path, params, raw, err))
+                    obj.apply_response("update", raw)
+                    flushed.append(obj)
+        finally:
+            self.last_flush = records
+        return flushed
 
     # ---- Context manager ----------------------------------------------------
 

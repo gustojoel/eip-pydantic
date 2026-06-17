@@ -101,7 +101,7 @@ class Space(SolidServerModel):
     _delete_path: ClassVar[str] = "rest/ip_site_delete"
 ```
 
-`Subnet` overrides `build_request` for `'create'` to inject `subnet_addr` and `subnet_prefix` (derived from the frozen `start_hostaddr` and `subnet_size` fields). All other operations use the `SolidServerModel` base implementations.
+`Subnet` overrides `build_request` for `'create'` to inject `subnet_addr` and `subnet_prefix` (derived from the frozen `subnet: IPv4Network` field). All other operations use the `SolidServerModel` base implementations.
 
 The Session dispatches based on the verb returned by `build_class_request` / `build_request`, so models can return non-standard verbs without Session changes.
 
@@ -221,7 +221,7 @@ Values are always coerced to `str` and single-quoted; internal `'` is escaped as
 
 - `errno: "0"` is included in every row of `*_list` and `*_info` responses (not only mutation responses).
 - `ip_block_subnet_list` does **not** return `site_class_parameters`, `site_class_parameters_properties`, `parent_subnet_class_parameters`, or `parent_subnet_class_parameters_properties` — these are only present in `ip_block_subnet_info` responses. The `_coerce` validator on `Subnet` handles both: `site_class_params` and `parent_subnet_class_params` (`ClassParamDict | None`) default to an empty/missing dict when the blobs are absent.
-- `start_ip_addr` / `end_ip_addr` / `parent_start_ip_addr` / `parent_end_ip_addr` come back as 8-char hex strings; `start_hostaddr` / `end_hostaddr` come as dotted-decimal. `_as_ipv4` handles both formats.
+- `start_ip_addr` / `end_ip_addr` come back as 8-char hex strings; `start_hostaddr` / `end_hostaddr` come as dotted-decimal — both are consumed by `_coerce` to build the `subnet: IPv4Network` field (stored) and `start_ip_addr` / `end_ip_addr` properties. `parent_start_ip_addr` / `parent_end_ip_addr` also arrive as hex and are stored directly.
 - FK-style ID fields (`parent_subnet_id`, `vlmdomain_id`, etc.) use `"0"` to mean "not set" — use `_as_nz_int` for these.
 - `subnet_level` uses `"0"` to mean "block type" (not "not set") — use plain `_as_int`.
 

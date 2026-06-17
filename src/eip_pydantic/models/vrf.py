@@ -8,7 +8,27 @@ from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
 
 
+
 class Vrf(SolidServerModel):
+    """An EfficientIP VRF object (``vrfobject_list`` / ``vrfobject_info``).
+
+    Represents a VRF entry from Chapter 67 (VRF) of the SolidServer REST API
+    reference. The model is used for the five key VRF services:
+
+    - ``vrf_vrfobject_add`` for create and update
+    - ``vrfobject_list`` for list
+    - ``vrfobject_info`` for fetch by ID
+    - ``vrfobject_count`` for count
+    - ``vrf_vrfobject_delete`` for delete
+
+    Mutable fields (writable via ``Session.flush()``):
+        ``vrfobject_name``, ``vrfobject_rd_id``, ``vrfobject_comment``,
+        ``vrfobject_class_name``, ``class_params``, ``row_enabled``.
+
+    Frozen fields are server-managed identity/state values and should be treated
+    as read-only snapshots from ``*_list`` / ``*_info`` responses.
+    """
+
     solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
         pk_field="vrfobject_id",
         class_param_prefix="vrfobject",
@@ -34,7 +54,7 @@ class Vrf(SolidServerModel):
     class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)
     row_enabled: RowEnabled | None = None
 
-    def write_params(self) -> dict[str, str]:
+    def write_params(self) -> dict[str, str]:  # noqa: D102
         out = super().write_params()
         for field in self._dirty:
             val = getattr(self, field)
@@ -47,7 +67,7 @@ class Vrf(SolidServerModel):
                     out[field] = "" if val is None else str(val)
         return out
 
-    def build_request(self, operation: str, **kwargs: Any) -> tuple[str, str, dict[str, str]]:
+    def build_request(self, operation: str, **kwargs: Any) -> tuple[str, str, dict[str, str]]:  # noqa: D102
         if operation != "create":
             return super().build_request(operation, **kwargs)
         params = self.write_params()
@@ -60,7 +80,7 @@ class Vrf(SolidServerModel):
             return data
         v = cast(dict[str, Any], data)
 
-        _BLOB_KEYS = frozenset({
+        _BLOB_KEYS = frozenset({  # noqa: N806
             "vrfobject_class_parameters",
             "vrfobject_class_parameters_properties",
             "vrfobject_class_parameters_inheritance_source",

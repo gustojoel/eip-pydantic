@@ -6,9 +6,9 @@ import httpx
 import pytest
 import respx
 
-from eip_pydantic import AsyncSession, FreeSubnet, InternalError, Session
+from eip_pydantic import AsyncSession, InternalError, Session
 from eip_pydantic.models.space import Space
-from eip_pydantic.models.subnet import Subnet
+from eip_pydantic.models.subnet import FreeSubnet, Subnet
 
 
 

@@ -32,7 +32,7 @@ class FreeSubnet(SolidServerModel):
     site_id: int | None = None
 
     @classmethod
-    def build_class_request(  # noqa: PLR0912
+    def build_class_request(
         cls,
         operation: str,
         **kwargs: Any,

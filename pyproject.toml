@@ -85,6 +85,7 @@ ignore = [
     # style preferences we disagree with
     "TRY300", # try/else — current code is clearer
     "C901",   # complexity — _build_list_params is fine as-is
+    "PLR0912", # too many branches — _coerce validators legitimately handle many field types
     "SIM108", # ternary — if/else is clearer for multi-branch logic
 ]
 preview = true
@@ -96,6 +97,7 @@ explicit-preview-rules = true
     "D103",     # test functions don't need docstrings
     "S104",     # IPv4Address("0.0.0.0") is a parsing assertion, not socket binding
     "PLC0415",  # imports inside test helpers/fixtures are intentional
+    "TC001",    # no need
 ]
 "scripts/*.py" = [
     "T201",    # print is intentional in scripts

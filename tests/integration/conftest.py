@@ -305,6 +305,10 @@ def vlsm_subnet(block: Subnet, test_network: IPv4Network) -> Subnet:
     assert block.subnet_id is not None
     s = open_session()
     try:
+        # Delete grandchild first: deleting vlsm orphans it, and an orphaned /28
+        # inside the range causes errno 5002 "Subnet overlap" when re-creating the /24.
+        for existing in s.list(Subnet, where=Subnet.c.subnet_name == _GRANDCHILD_NAME, limit=10):
+            s.delete(existing)
         for existing in s.list(Subnet, where=Subnet.c.subnet_name == _VLSM_NAME, limit=10):
             s.delete(existing)
         sn = s.create(

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import Field
 
+from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import SolidServerModel
+from eip_pydantic.models.base import SolidServerConfig
 
 
 
@@ -16,6 +19,11 @@ class _Site(SolidServerModel):
 
 class _Scope(SolidServerModel):
     _class_param_prefix = "dhcpscope"
+
+
+class _PrefixModel(SolidServerModel):
+    solid_config = SolidServerConfig(class_param_prefix="prefix")
+    class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)
 
 
 def test_c_must_be_accessed_on_class() -> None:
@@ -54,6 +62,11 @@ def test_tagged_class_parameters_empty_no_base_model() -> None:
 def test_write_params_base_returns_empty() -> None:
     obj = SolidServerModel.model_validate({})
     assert obj.write_params() == {}
+
+
+def test_model_post_init_sets_missing_class_param_prefix() -> None:
+    obj = _PrefixModel.model_validate({})
+    assert obj.class_params.api_prefix == "prefix"
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +140,14 @@ def test_as_nz_int_invalid_returns_none() -> None:
 
 def test_as_float_invalid_returns_none() -> None:
     assert SolidServerModel._as_float("not-a-float") is None
+
+
+def test_as_bool_type_error_returns_none() -> None:
+    class _BadStr:
+        def __str__(self) -> str:
+            raise TypeError("bad str")
+
+    assert SolidServerModel._as_bool(_BadStr()) is None
 
 
 def test_as_hex_ipv4_invalid_returns_none() -> None:

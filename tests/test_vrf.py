@@ -132,6 +132,12 @@ def test_vrf_no_model_extra_on_minimal_row() -> None:
     assert not v.model_extra
 
 
+def test_vrf_unknown_extra_is_preserved() -> None:
+    v = Vrf.model_validate({**_LIST_ROW, "custom_marker": "keep-me"})
+    assert v.model_extra is not None
+    assert v.model_extra["custom_marker"] == "keep-me"
+
+
 def test_vrf_coerce_non_dict_passthrough() -> None:
     sentinel = object()
     assert Vrf._coerce(sentinel) is sentinel

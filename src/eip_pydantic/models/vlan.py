@@ -42,6 +42,10 @@ class Vlan(SolidServerModel):
             "add": "rest/vlm_vlan_add",
             "delete": "rest/vlm_vlan_delete",
         }),
+        parent_fields=MappingProxyType({
+            "vlmdomain_id": "vlmdomain_id",  # VlanDomain parent
+            "vlmrange_id":  "vlmrange_id",   # VlanRange parent (optional)
+        }),
     )
 
     # ------------------------------------------------------------------

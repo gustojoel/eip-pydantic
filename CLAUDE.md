@@ -57,6 +57,7 @@ scripts/
 - `session.get(cls, pk)` — fetch by PK with identity-map cache; does NOT auto-track (call `session.add(obj)` to track for writes)
 - `session.add(obj)` — explicitly track an existing object for dirty-write on flush
 - `session.new(obj)` — register a new object for creation on flush
+- `session.create(cls, parent=None, **kwargs)` — construct `cls(**kwargs)`, register for POST, return it; optional `parent` injects the parent's PK into the correct child field automatically (see § `parent_fields`)
 - `session.delete(obj)` — DELETE immediately (removes from cache and tracked list)
 - `session.flush()` — write all pending creates/updates in tracked order
 - Context manager — `__exit__` flushes (clean exit only) then closes the HTTP client
@@ -70,6 +71,15 @@ with Session("solidserver.example.com", "admin", "secret") as s:
     space = s.get(Space, subnets[0].site_id)   # cached after first call
     subnets[0].subnet_name = "renamed"
 # flush() on clean exit → one PUT
+
+# Creating objects — with and without a parent
+with Session("solidserver.example.com", "admin", "secret") as s:
+    space = s.get(Space, 7)
+    block = s.create(Subnet, space, subnet_name="prod-block", subnet=IPv4Network("10.0.0.0/16"), subnet_level=0)
+    # → site_id=7 injected automatically; block POSTed on flush()
+
+    child = s.create(Subnet, block, subnet_name="prod-dmz", subnet=IPv4Network("10.0.1.0/24"), subnet_level=1)
+    # → parent_subnet_id=<block.subnet_id> injected after block is flushed
 
 # Using the expression builder (see § Expression builder below)
 with Session("solidserver.example.com", "admin", "secret") as s:
@@ -97,14 +107,20 @@ Every model class participates in request dispatch via four methods on `SolidSer
 - `cls.parse_response(operation, data) -> list[T] | T` — classmethod, deserialises JSON for `'list'` / `'info'`
 - `obj.apply_response(operation, data)` — instance method, updates the instance after a write (`'create'` calls `finalize_creation`, `'update'` calls `mark_clean`)
 
-Each concrete model declares its API paths as ClassVars:
+Each concrete model declares its API paths inside `solid_config.paths`:
 
 ```python
 class Space(SolidServerModel):
-    _list_path:   ClassVar[str] = "rest/ip_site_list"
-    _info_path:   ClassVar[str] = "rest/ip_site_info"
-    _add_path:    ClassVar[str] = "rest/ip_site_add"
-    _delete_path: ClassVar[str] = "rest/ip_site_delete"
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
+        pk_field="site_id",
+        paths=MappingProxyType({
+            "list":   "rest/ip_site_list",
+            "info":   "rest/ip_site_info",
+            "count":  "rest/ip_site_count",
+            "add":    "rest/ip_site_add",
+            "delete": "rest/ip_site_delete",
+        }),
+    )
 ```
 
 `Subnet` overrides `build_request` for `'create'` to inject `subnet_addr` and `subnet_prefix` (derived from the frozen `subnet: IPv4Network` field). All other operations use the `SolidServerModel` base implementations.
@@ -124,10 +140,13 @@ The Session dispatches based on the verb returned by `build_class_request` / `bu
 
 - Pydantic v2 config: `extra="allow"` (unknown fields stored in `model_extra`), `populate_by_name=True`, `str_strip_whitespace=True`, `validate_assignment=True`
 - `errno: int | None` — present on every API row (not just mutation responses), frozen
-- `_class_param_prefix: ClassVar[str | None]` — set by subclasses to enable class-param properties
-- `tags_prefix: ClassVar[str]` — TAGS object-type name for the expression builder (e.g. `"site"`, `"network"`); empty string means no TAGS support
-- `_pk_field: ClassVar[str]` — name of the PK field (e.g. `"site_id"`, `"subnet_id"`)
-- `_list_path`, `_info_path`, `_add_path`, `_delete_path: ClassVar[str]` — API paths (set by each model)
+- `solid_config: ClassVar[SolidServerConfig]` — per-model config NamedTuple with fields:
+  - `pk_field: str` — name of the PK field (e.g. `"site_id"`, `"subnet_id"`)
+  - `class_param_prefix: str | None` — enables class-param serialisation
+  - `tags_prefix: str` — TAGS object-type name for the expression builder (e.g. `"site"`, `"network"`); empty string = no TAGS support
+  - `create_fields: frozenset[str] | None` — fields accepted by `Session.create()`; `None` = unrestricted
+  - `paths: MappingProxyType[str, str]` — API paths keyed by operation (`"list"`, `"info"`, `"count"`, `"add"`, `"delete"`, and model-specific keys)
+  - `parent_fields: MappingProxyType[str, str]` — maps parent model's `pk_field` name → child field to inject; drives `Session.create(parent=…)` (see § `parent_fields`)
 - `c: ClassVar[ColumnCollection]` — expression-builder accessor; see § Expression builder
 - Forward-coercion helpers (wire → Python, used by `model_validator`s):
   - `_as_str(v)` — `""` / `"#"` → `None`
@@ -209,15 +228,71 @@ Space.c.rank.desc()                     # tag_site_rank DESC        + TAGS=site.
 # → (site_name='prod') or (site_name='staging')   (no TAGS)
 ```
 
-**Adding a new model** — set `tags_prefix` to the correct TAGS object-type name from the API reference table (§ TAGS, "TAGS object-type names"):
+**Adding a new model** — set `tags_prefix` in `solid_config` to the correct TAGS object-type name from the API reference table (§ TAGS, "TAGS object-type names"):
 
 ```python
 class IpAddress(SolidServerModel):
-    tags_prefix: ClassVar[str] = "ip"   # from the TAGS table
-    ...
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
+        tags_prefix="ip",   # from the TAGS table
+        ...
+    )
 ```
 
 Values are always coerced to `str` and single-quoted; internal `'` is escaped as `''`.
+
+### `parent_fields` — hierarchical parent injection
+
+`Session.create(cls, parent, **kwargs)` accepts an optional second positional argument `parent: SolidServerModel | None`.  When provided, it looks up the parent's `pk_field` in `cls.solid_config.parent_fields` and injects `{child_field: parent.id}` into `kwargs` before constructing the object.
+
+This avoids manually threading IDs through the call site:
+
+```python
+with Session(...) as s:
+    space = s.get(Space, 7)
+
+    # Without parent= you must pass site_id manually:
+    sn = s.create(Subnet, site_id=space.site_id, subnet_name="foo", ...)
+
+    # With parent= it is injected automatically:
+    sn = s.create(Subnet, space, subnet_name="foo", ...)
+
+    # Passing a Subnet parent injects parent_subnet_id instead of site_id:
+    child = s.create(Subnet, sn, subnet_name="child", ...)
+```
+
+**`parent_fields` mapping per model** (key = parent's `pk_field`, value = child field):
+
+| Child model | Parent pk_field | Child field injected |
+|---|---|---|
+| `Space` | `site_id` | `parent_site_id` |
+| `Subnet` | `site_id` | `site_id` |
+| `Subnet` | `subnet_id` | `parent_subnet_id` |
+| `Pool` | `site_id` | `site_id` |
+| `Pool` | `subnet_id` | `subnet_id` |
+| `IpAddress` | `site_id` | `site_id` |
+| `IpAddress` | `subnet_id` | `subnet_id` |
+| `VlanRange` | `vlmdomain_id` | `vlmdomain_id` |
+| `Vlan` | `vlmdomain_id` | `vlmdomain_id` |
+| `Vlan` | `vlmrange_id` | `vlmrange_id` |
+
+**Errors raised by `create()`:**
+- `TypeError` — parent type not in `cls.solid_config.parent_fields` (wrong hierarchy)
+- `TypeError` — the injected field is already present in `kwargs` (conflict)
+- `TypeError` — any kwarg is not in `cls.solid_config.create_fields`
+- `ValueError` — parent has no `id` (not yet flushed)
+
+**Adding `parent_fields` to a new model** — key by the parent model's `solid_config.pk_field` string (no import of the parent class needed):
+
+```python
+class MyChild(SolidServerModel):
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
+        ...
+        parent_fields=MappingProxyType({
+            "site_id": "site_id",        # Space parent → child.site_id
+            "subnet_id": "subnet_id",    # Subnet parent → child.subnet_id
+        }),
+    )
+```
 
 ### `RowEnabled` enum
 

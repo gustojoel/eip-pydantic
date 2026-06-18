@@ -1,9 +1,10 @@
 """eip-pydantic — typed Python SDK for the EfficientIP SolidServer REST API.
 
 The main entry points are :class:`Session` (sync) and :class:`AsyncSession` (async).
-Model classes (:class:`Space`, :class:`Subnet`, :class:`Pool`, :class:`IpAddress`,
+Model classes (:class:`eip_pydantic.models.space.Space`, :class:`Subnet`, :class:`Pool`, :class:`IpAddress`,
 :class:`Vrf`) represent API objects and handle wire-format coercion automatically.
 """
+
 from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.client import AsyncEipClient, EipClient
 from eip_pydantic.exceptions import ApiError, AuthenticationError, InternalError, NotFoundError, SolidServerError

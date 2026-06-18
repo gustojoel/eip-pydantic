@@ -1131,3 +1131,61 @@ def test_session_create_rejects_unknown_fields() -> None:
     with Session(HOST, *CREDS) as s:
         with pytest.raises(TypeError, match="not allowed at creation"):
             s.create(Space, site_id=99)  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# BaseSession.create — parent injection
+# ---------------------------------------------------------------------------
+
+def _make_space(site_id: int) -> Space:
+    return Space.model_validate({**_SPACE_ROW, "site_id": str(site_id)})
+
+
+def _make_subnet(subnet_id: int, site_id: int) -> Subnet:
+    return Subnet.model_validate({**_SUBNET_ROW, "subnet_id": str(subnet_id), "site_id": str(site_id)})
+
+
+def test_create_with_space_parent_injects_site_id() -> None:
+    space = _make_space(7)
+    s = Session(HOST, *CREDS)
+    sn = s.create(Subnet, space, subnet_name="child", subnet=IPv4Network("10.0.0.0/24"))
+    assert sn.site_id == 7
+
+
+def test_create_with_subnet_parent_injects_parent_subnet_id() -> None:
+    parent = _make_subnet(55, 7)
+    s = Session(HOST, *CREDS)
+    child = s.create(Subnet, parent, subnet_name="child", subnet=IPv4Network("10.0.0.0/25"))
+    _, _, params = child.build_request("create")
+    assert params["parent_subnet_id"] == "55"
+    assert "site_id" not in params
+
+
+def test_create_with_space_parent_for_nested_space() -> None:
+    parent_space = _make_space(3)
+    s = Session(HOST, *CREDS)
+    child = s.create(Space, parent_space, site_name="child-space")
+    _, _, params = child.build_request("create")
+    assert params["parent_site_id"] == "3"
+
+
+def test_create_parent_invalid_type_raises() -> None:
+    # Subnet is not in Space.solid_config.parent_fields (pk_field "subnet_id" not mapped)
+    subnet = _make_subnet(1, 7)
+    s = Session(HOST, *CREDS)
+    with pytest.raises(TypeError, match="not a valid parent type"):
+        s.create(Space, subnet, site_name="x")
+
+
+def test_create_parent_conflict_with_kwarg_raises() -> None:
+    space = _make_space(7)
+    s = Session(HOST, *CREDS)
+    with pytest.raises(TypeError, match="Cannot pass both"):
+        s.create(Subnet, space, site_id=99, subnet_name="x", subnet=IPv4Network("10.0.0.0/24"))
+
+
+def test_create_parent_no_id_raises() -> None:
+    space = Space(site_name="unsaved")
+    s = Session(HOST, *CREDS)
+    with pytest.raises(ValueError, match="no id"):
+        s.create(Subnet, space, subnet_name="x", subnet=IPv4Network("10.0.0.0/24"))

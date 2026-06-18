@@ -44,6 +44,10 @@ class Pool(SolidServerModel):
             "add":    "rest/ip_pool_add",
             "delete": "rest/ip_pool_delete",
         }),
+        parent_fields=MappingProxyType({
+            "site_id":   "site_id",    # Space parent
+            "subnet_id": "subnet_id",  # Subnet parent
+        }),
     )
 
     # ------------------------------------------------------------------

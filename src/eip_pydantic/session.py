@@ -77,23 +77,50 @@ class BaseSession:
         obj.mark_new()
         self._new.append(obj)
 
-    def create(self, cls: type[T], **kwargs: Any) -> T:
+    def create(self, cls: type[T], parent: SolidServerModel | None = None, **kwargs: Any) -> T:
         """Instantiate ``cls`` with ``kwargs``, register it for creation, and return it.
 
         Equivalent to ``obj = cls(**kwargs); session.new(obj)`` but in one call.
-        When the model defines ``_create_fields``, only those field names are
+        When the model defines ``create_fields``, only those field names are
         accepted; any extra key raises ``TypeError`` before the object is built.
 
         Args:
             cls: The model class to create (e.g. ``Space``, ``Subnet``).
+            parent: Optional parent object.  Its primary key is injected into the
+                child field named in ``cls.solid_config.parent_fields`` for the
+                parent's ``pk_field``.  For example, passing a ``Space`` instance
+                when creating a ``Subnet`` injects ``site_id``; passing a ``Subnet``
+                injects ``parent_subnet_id``.
             **kwargs: Field values to pass to the model constructor.
 
         Returns:
             The new model instance, already registered for POST on ``flush()``.
 
         Raises:
-            TypeError: If any kwarg is not in ``cls._create_fields``.
+            TypeError: If any kwarg is not in ``cls.solid_config.create_fields``,
+                or if ``parent`` is not a recognised parent type for ``cls``,
+                or if the injected field is already present in ``kwargs``.
+            ValueError: If ``parent`` has no primary key (not yet flushed).
         """
+        if parent is not None:
+            parent_pk_field = type(parent).solid_config.pk_field
+            pf = cls.solid_config.parent_fields
+            if parent_pk_field not in pf:
+                raise TypeError(
+                    f"{type(parent).__name__} is not a valid parent type for {cls.__name__}"
+                )
+            child_field = pf[parent_pk_field]
+            if child_field in kwargs:
+                raise TypeError(
+                    f"Cannot pass both parent={type(parent).__name__!r} and "
+                    f"{child_field!r}= to create()"
+                )
+            if (parent_id := parent.id) is None:
+                raise ValueError(
+                    f"Parent {type(parent).__name__} has no id; flush it before using it as a parent"
+                )
+            kwargs[child_field] = parent_id
+
         cf = cls.solid_config.create_fields
         if cf is not None and (unknown := kwargs.keys() - cf):
             raise TypeError(f"Fields not allowed at creation for {cls.__name__}: {sorted(unknown)}")

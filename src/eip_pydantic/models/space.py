@@ -39,6 +39,9 @@ class Space(SolidServerModel):
             "add":    "rest/ip_site_add",
             "delete": "rest/ip_site_delete",
         }),
+        parent_fields=MappingProxyType({
+            "site_id": "parent_site_id",  # Space nested in Space
+        }),
     )
 
     # ------------------------------------------------------------------

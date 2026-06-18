@@ -174,6 +174,10 @@ class Subnet(SolidServerModel):
             "add":    "rest/ip_subnet_add",
             "delete": "rest/ip_subnet_delete",
         }),
+        parent_fields=MappingProxyType({
+            "site_id":   "site_id",           # Space parent
+            "subnet_id": "parent_subnet_id",  # Subnet parent (block/VLSM)
+        }),
     )
 
     # ------------------------------------------------------------------

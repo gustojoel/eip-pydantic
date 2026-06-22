@@ -32,12 +32,16 @@ class SolidServerConfig(NamedTuple):
         paths: Mapping of operation name → REST/RPC path.  Standard keys: ``"list"``,
             ``"info"``, ``"count"``, ``"add"``, ``"delete"``.  Non-standard keys (e.g.
             ``"find_free"``) are used by model-specific ``build_class_request`` overrides.
+        parent_fields: Mapping of parent model ``pk_field`` name → child field name.
+            Drives the ``parent`` argument of ``Session.create()`` — when a parent object is
+            supplied, its PK is injected into the child's field named here.
     """
     pk_field: str = ""
     class_param_prefix: str | None = None
     tags_prefix: str = ""
     create_fields: frozenset[str] | None = None
     paths: MappingProxyType[str, str] = _EMPTY_PATHS
+    parent_fields: MappingProxyType[str, str] = _EMPTY_PATHS
 
 
 def _make_notifier(dirty: set[str], field_name: str) -> Callable[[], None]:

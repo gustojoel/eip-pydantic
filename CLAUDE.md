@@ -36,6 +36,20 @@ tests/
     test_ipam_subnet.py    — live integration tests via Session
 scripts/
   eip_inspect.py           — CLI inspection tool (parsed model + model_extra diff + ClassParamDict fields)
+  convert_api_docs.py      — converts SOLIDserver PDF to api_docs/ markdown (see § API docs below)
+api_docs/
+  README.md                — index of all 73 chapters with [SDK] tags
+  ch01_*.md … ch73_*.md   — one file per chapter; param names **bolded**, boilerplate stripped
+```
+
+## API docs
+
+`api_docs/` contains the full SolidServer REST API v8.4 reference as markdown — one file per chapter (73 total), auto-converted from the PDF. Use these instead of the PDF when looking up services, parameters, or type info. `api_docs/README.md` is the chapter index.
+
+To regenerate after a PDF update:
+```bash
+pdftotext -layout <new-pdf> api_full.txt
+python scripts/convert_api_docs.py api_full.txt
 ```
 
 ## Tooling

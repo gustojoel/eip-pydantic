@@ -8,5 +8,6 @@
       "Bash(poetry run *)",
       "Bash(python3 *)"
     ]
-  }
+  },
+  "spinnerTipsEnabled": true
 }

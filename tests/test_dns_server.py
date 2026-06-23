@@ -10,6 +10,7 @@ from eip_pydantic.models.base import RowEnabled
 from eip_pydantic.models.dns_server import DnsServer
 
 
+
 HOST = "solidserver.example.com"
 CREDS = ("admin", "secret")
 BASE = f"https://{HOST}/"

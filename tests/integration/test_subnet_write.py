@@ -29,17 +29,16 @@ from tests.integration.conftest import (
     _CHILD_NAME,
     _CLASSPARAM_NAME,
     _GRANDCHILD_NAME,
-    _IDX_CHILD,
     _IDX_CLASSPARAM,
     _IDX_NOLOCK,
     _IDX_TERMINAL,
     _NOLOCK_NAME,
     _TERMINAL_NAME,
-    _VLSM_NAME,
     _block,
     _child_24s,
     open_session,
 )
+
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +127,12 @@ def test_child_has_correct_parent(
 
 
 def test_child_type_field(session: Session, child_subnet: Subnet) -> None:
-    """type is always 'subnet' on the real server; subnet_level distinguishes blocks."""
+    """Type is always 'subnet' on the real server; subnet_level distinguishes blocks."""
     assert child_subnet.subnet_id is not None
     sn = session.get(Subnet, child_subnet.subnet_id)
     assert sn.type == "subnet"
-    assert sn.subnet_level is not None and sn.subnet_level > 0
+    assert sn.subnet_level is not None
+    assert sn.subnet_level > 0
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +406,8 @@ def test_create_sends_no_add_flag_for_subnet(
     test_network: IPv4Network,
 ) -> None:
     """Subnet.build_request('create') does not inject add_flag, so the server
-    defaults to new_edit.  Verify by upsert-creating a subnet that already exists."""
+    defaults to new_edit.  Verify by upsert-creating a subnet that already exists.
+    """
     net = _child_24s(test_network)[_IDX_TERMINAL]
     assert block.subnet_id is not None
     sn = write_session.create(

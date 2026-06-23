@@ -5,6 +5,7 @@ import pytest
 from eip_pydantic.class_params import ClassParamDict
 
 
+
 def test_from_blobs_defaults_and_sources() -> None:
     cp = ClassParamDict.from_blobs(
         params_blob="a=1&b=2&c=3",
@@ -34,8 +35,8 @@ def test_mapping_interface_basics() -> None:
 
     assert "k1" in cp
     assert len(cp) == 2
-    assert sorted(list(iter(cp))) == ["k1", "k2"]
-    assert sorted(list(cp.items())) == [("k1", "v1"), ("k2", "v2")]
+    assert sorted(iter(cp)) == ["k1", "k2"]
+    assert sorted(cp.items()) == [("k1", "v1"), ("k2", "v2")]
     assert "ClassParamDict" in repr(cp)
 
 

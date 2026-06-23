@@ -107,17 +107,17 @@ class BaseSession:
             pf = cls.solid_config.parent_fields
             if parent_pk_field not in pf:
                 raise TypeError(
-                    f"{type(parent).__name__} is not a valid parent type for {cls.__name__}"
+                    f"{type(parent).__name__} is not a valid parent type for {cls.__name__}",
                 )
             child_field = pf[parent_pk_field]
             if child_field in kwargs:
                 raise TypeError(
                     f"Cannot pass both parent={type(parent).__name__!r} and "
-                    f"{child_field!r}= to create()"
+                    f"{child_field!r}= to create()",
                 )
             if (parent_id := parent.id) is None:
                 raise ValueError(
-                    f"Parent {type(parent).__name__} has no id; flush it before using it as a parent"
+                    f"Parent {type(parent).__name__} has no id; flush it before using it as a parent",
                 )
             kwargs[child_field] = parent_id
 

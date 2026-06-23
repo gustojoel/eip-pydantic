@@ -6,8 +6,7 @@ import pytest
 from pydantic import Field
 
 from eip_pydantic.class_params import ClassParamDict
-from eip_pydantic.models.base import SolidServerModel
-from eip_pydantic.models.base import SolidServerConfig
+from eip_pydantic.models.base import SolidServerConfig, SolidServerModel
 
 
 

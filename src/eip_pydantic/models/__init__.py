@@ -2,6 +2,7 @@
 from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.address import IpAddress
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
+from eip_pydantic.models.dhcp_failover import DhcpFailoverChannel
 from eip_pydantic.models.dhcp_range import DhcpRange
 from eip_pydantic.models.dhcp_scope import DhcpScope
 from eip_pydantic.models.dhcp_server import DhcpServer
@@ -22,6 +23,7 @@ from eip_pydantic.models.vrf import Vrf
 
 __all__ = [
     "ClassParamDict",
+    "DhcpFailoverChannel",
     "DhcpRange",
     "DhcpScope",
     "DhcpServer",

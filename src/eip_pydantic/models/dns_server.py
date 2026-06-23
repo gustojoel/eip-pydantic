@@ -9,6 +9,7 @@ from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
 
 
+
 class DnsServer(SolidServerModel):
     """A DNS server managed by SolidServer (``dns_server_list`` / ``dns_server_info``).
 

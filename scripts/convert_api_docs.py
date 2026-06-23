@@ -13,6 +13,8 @@ import re
 import sys
 from pathlib import Path
 
+
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_TXT = _REPO_ROOT / "api_full.txt"
 FULL_TEXT = Path(sys.argv[1]) if len(sys.argv) > 1 else _DEFAULT_TXT
@@ -143,7 +145,7 @@ def clean_page(text: str) -> str:
     cleaned = []
     skip_next = False
 
-    first_nonempty = next((i for i, l in enumerate(lines) if l.strip()), -1)
+    first_nonempty = next((i for i, ln in enumerate(lines) if ln.strip()), -1)
 
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -209,7 +211,7 @@ def normalize_indentation(text: str) -> str:
 
 def collapse_blank_lines(text: str, max_consecutive: int = 2) -> str:
     """Collapse runs of more than max_consecutive blank lines."""
-    return re.sub(r"\n{%d,}" % (max_consecutive + 1), "\n" * max_consecutive, text)
+    return re.sub(rf"\n{{{max_consecutive + 1},}}", "\n" * max_consecutive, text)
 
 
 def strip_footnotes(text: str) -> str:
@@ -231,7 +233,7 @@ def format_as_markdown(chapter_num: int, title: str, part: str, raw_text: str) -
 
     # File header
     out.append(f"# Chapter {chapter_num}: {title}")
-    out.append(f"")
+    out.append("")
     out.append(f"**Part {part}**  ")
     if services:
         out.append(f"**Services:** {', '.join(f'`{s}`' for s in services)}")
@@ -253,9 +255,9 @@ def format_as_markdown(chapter_num: int, title: str, part: str, raw_text: str) -
             if m:
                 svc, desc = m.group(1), m.group(2)
                 out.append(f"## `{svc}`")
-                out.append(f"")
+                out.append("")
                 out.append(f"**{desc}**")
-                out.append(f"")
+                out.append("")
                 i += 2
                 continue
 
@@ -282,10 +284,10 @@ def format_as_markdown(chapter_num: int, title: str, part: str, raw_text: str) -
                 # Skip until we hit a non-indented line or another section
                 i += 1
                 while i < len(lines):
-                    l = lines[i]
-                    ls = l.strip()
+                    line = lines[i]
+                    ls = line.strip()
                     # Stop at next parameter (non-indented non-empty line that doesn't start a sentence)
-                    if ls and not l.startswith("  ") and ls not in ("", ):
+                    if ls and not line.startswith("  ") and ls != "":
                         # Next param or section — don't consume it
                         break
                     i += 1
@@ -323,7 +325,7 @@ def format_as_markdown(chapter_num: int, title: str, part: str, raw_text: str) -
             "### Input Parameters\n\n"
             "> **Standard list params** (for `*_list` services): `SELECT`, `WHERE`, `ORDERBY`, "
             "`offset`, `limit`, `NO_PARENT_CLASS_PARAM`, `TAGS`. See Chapter 3–4.\n\n",
-            1  # only first occurrence
+            1,  # only first occurrence
         )
 
     return collapse_blank_lines(final_text)

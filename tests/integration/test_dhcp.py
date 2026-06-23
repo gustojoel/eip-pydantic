@@ -42,12 +42,14 @@ from ipaddress import IPv4Address
 import pytest
 
 from eip_pydantic import Session
+from eip_pydantic.models.dhcp_failover import DhcpFailoverChannel
 from eip_pydantic.models.dhcp_range import DhcpRange
 from eip_pydantic.models.dhcp_scope import DhcpScope
 from eip_pydantic.models.dhcp_server import DhcpServer
 from eip_pydantic.models.dhcp_static import DhcpStatic
 
 from .conftest import _skip_if_no_creds, open_session
+
 
 
 _DHCP_SERVER_NAME = os.getenv("TEST_DHCP_SERVER", "test.dhcp")
@@ -622,3 +624,67 @@ class TestDhcpStaticCrud:
                 where=f"dhcp_id='{dhcp_id}' and dhcpscope_net_addr='{_SCOPE_NET}'",
             )
         assert len(gone) == 0
+
+
+# ---------------------------------------------------------------------------
+# DhcpFailoverChannel (read-only)
+# ---------------------------------------------------------------------------
+
+
+class TestDhcpFailoverChannel:
+    """Integration tests for DhcpFailoverChannel (dhcp_failover_list / dhcp_failover_info).
+
+    Failover channels are read-only — no create or delete paths exist.
+    Tests skip gracefully when credentials are absent.
+    """
+
+    def test_list_all_failover_channels(self) -> None:
+        _skip_if_no_creds()
+        with open_session() as s:
+            channels = s.list(DhcpFailoverChannel)
+        # May be empty if no failover is configured; just assert it is a list.
+        assert isinstance(channels, list)
+
+    def test_list_for_test_dhcp_server(self) -> None:
+        _skip_if_no_creds()
+        with open_session() as s:
+            dhcp_id = _test_dhcp_id(s)
+            channels = s.list(
+                DhcpFailoverChannel,
+                where=f"dhcp_id='{dhcp_id}'",
+            )
+        assert isinstance(channels, list)
+        for ch in channels:
+            assert ch.dhcp_id == dhcp_id
+
+    def test_list_with_expression_builder(self) -> None:
+        _skip_if_no_creds()
+        with open_session() as s:
+            dhcp_id = _test_dhcp_id(s)
+            channels = s.list(
+                DhcpFailoverChannel,
+                where=DhcpFailoverChannel.c.dhcp_id == dhcp_id,
+            )
+        assert isinstance(channels, list)
+        for ch in channels:
+            assert ch.dhcp_id == dhcp_id
+
+    def test_get_by_id_if_any_exist(self) -> None:
+        _skip_if_no_creds()
+        with open_session() as s:
+            dhcp_id = _test_dhcp_id(s)
+            channels = s.list(
+                DhcpFailoverChannel,
+                where=f"dhcp_id='{dhcp_id}'",
+                limit=1,
+            )
+            if not channels:
+                pytest.skip(
+                    f"No failover channels on server dhcp_id={dhcp_id}; "
+                    "configure failover to test dhcp_failover_info"
+                )
+            ch = channels[0]
+            assert ch.dhcpfailover_id is not None
+            fetched = s.get(DhcpFailoverChannel, ch.dhcpfailover_id)
+        assert fetched.dhcpfailover_id == ch.dhcpfailover_id
+        assert fetched.dhcpfailover_name == ch.dhcpfailover_name

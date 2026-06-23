@@ -9,6 +9,7 @@ from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
 
 
+
 class DnsZone(SolidServerModel):
     """A DNS zone (``dns_zone_list`` / ``dns_zone_info``).
 

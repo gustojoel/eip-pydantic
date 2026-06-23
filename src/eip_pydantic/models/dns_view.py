@@ -9,6 +9,7 @@ from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
 
 
+
 class DnsView(SolidServerModel):
     """A DNS view (``dns_view_list`` / ``dns_view_info``).
 

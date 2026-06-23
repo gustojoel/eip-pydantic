@@ -372,7 +372,7 @@ def test_build_request_create_subnet_with_site_name_only() -> None:
         site_name="global",
     )
     sn.mark_new()
-    verb, path, params = sn.build_request("create")
+    verb, _path, params = sn.build_request("create")
     assert verb == "POST"
     assert params["subnet_addr"] == "10.0.2.0"
     assert params["subnet_prefix"] == "24"
@@ -1128,9 +1128,8 @@ def test_session_create_space_sends_post() -> None:
 
 @respx.mock
 def test_session_create_rejects_unknown_fields() -> None:
-    with Session(HOST, *CREDS) as s:
-        with pytest.raises(TypeError, match="not allowed at creation"):
-            s.create(Space, site_id=99)  # type: ignore[call-arg]
+    with Session(HOST, *CREDS) as s, pytest.raises(TypeError, match="not allowed at creation"):
+        s.create(Space, site_id=99)  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ from eip_pydantic.models.base import RowEnabled
 from eip_pydantic.models.vrf import Vrf
 
 
+
 HOST = "solidserver.example.com"
 CREDS = ("admin", "secret")
 BASE = "https://solidserver.example.com/"

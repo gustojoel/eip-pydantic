@@ -67,6 +67,7 @@ def test_subnet_info_has_ip_addresses(session: Session) -> None:
     info = session.get(Subnet, subnets[0].subnet_id)
     # Subnet encodes its address range in the IPv4Network field; network_address
     # and broadcast_address give the start and end respectively.
+    assert info.subnet is not None
     assert info.subnet.network_address is not None
     assert info.subnet.broadcast_address is not None
 

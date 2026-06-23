@@ -21,6 +21,7 @@ from tests.integration.conftest import (
 )
 
 
+
 # ---------------------------------------------------------------------------
 # Pool creation
 # ---------------------------------------------------------------------------
@@ -35,7 +36,7 @@ def test_pool_address_range(
     test_network: IPv4Network,
 ) -> None:
     """Pool start/end addresses match what was requested."""
-    from tests.integration.conftest import _POOL_OFFSET_START, _POOL_OFFSET_END
+    from tests.integration.conftest import _POOL_OFFSET_END, _POOL_OFFSET_START
     assert pool.pool_id is not None
     p = session.get(Pool, pool.pool_id)
     base = int(_child_24s(test_network)[_IDX_CHILD].network_address)

@@ -23,7 +23,7 @@ Configure via .env:
 
 from __future__ import annotations
 
-from ipaddress import IPv4Network
+from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
@@ -33,6 +33,13 @@ from eip_pydantic.exceptions import ApiError
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
 from tests.integration.conftest import open_session
+
+
+
+if TYPE_CHECKING:
+    from ipaddress import IPv4Network
+
+
 
 _SKIP_SPACE_WRITE = "Space write operations require 'ip_site_add' permission (not yet granted)"
 
@@ -255,7 +262,8 @@ def test_space_get_nested(
     sp = session.get(Space, nested_space.site_id)
     assert sp.site_id == nested_space.site_id
     assert sp.parent_site_id == test_site_id
-    assert sp.tree_level is not None and sp.tree_level >= 1
+    assert sp.tree_level is not None
+    assert sp.tree_level >= 1
 
 
 def test_space_list_expression_where(session: Session, test_site_id: int) -> None:
@@ -340,7 +348,8 @@ def test_nested_space_tree_level(session: Session, nested_space: Space) -> None:
     """Nested space has tree_level >= 1."""
     assert nested_space.site_id is not None
     sp = session.get(Space, nested_space.site_id)
-    assert sp.tree_level is not None and sp.tree_level >= 1
+    assert sp.tree_level is not None
+    assert sp.tree_level >= 1
 
 
 def test_nested_space_site_name(session: Session, nested_space: Space) -> None:
@@ -587,7 +596,8 @@ def test_deep_space_tree_level(session: Session, deep_space: Space) -> None:
     """Depth-2 space has tree_level >= 2."""
     assert deep_space.site_id is not None
     sp = session.get(Space, deep_space.site_id)
-    assert sp.tree_level is not None and sp.tree_level >= 2
+    assert sp.tree_level is not None
+    assert sp.tree_level >= 2
 
 
 def test_deep_space_site_name(session: Session, deep_space: Space) -> None:
@@ -623,7 +633,8 @@ def test_deeper_space_tree_level(session: Session, deeper_space: Space) -> None:
     """Depth-3 space has tree_level >= 3."""
     assert deeper_space.site_id is not None
     sp = session.get(Space, deeper_space.site_id)
-    assert sp.tree_level is not None and sp.tree_level >= 3
+    assert sp.tree_level is not None
+    assert sp.tree_level >= 3
 
 
 def test_deeper_space_site_name(session: Session, deeper_space: Space) -> None:
@@ -642,8 +653,10 @@ def test_deeper_space_tree_path_contains_all_ancestors(
     assert deeper_space.site_id is not None
     sp = session.get(Space, deeper_space.site_id)
     assert sp.tree_path is not None
-    assert nested_space.site_name is not None and nested_space.site_name in sp.tree_path
-    assert deep_space.site_name is not None and deep_space.site_name in sp.tree_path
+    assert nested_space.site_name is not None
+    assert nested_space.site_name in sp.tree_path
+    assert deep_space.site_name is not None
+    assert deep_space.site_name in sp.tree_path
 
 
 def test_deeper_space_id_filter(session: Session, deeper_space: Space) -> None:

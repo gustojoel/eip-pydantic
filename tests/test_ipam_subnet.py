@@ -216,6 +216,7 @@ def test_subnet_start_hostaddr_dotted_builds_correct_subnet() -> None:
     # "10.0.2.0" is 8 chars but dotted-decimal — must not be confused with hex
     row = {k: v for k, v in _SUBNET_LIST_ROW.items() if k != "start_ip_addr"}
     s = Subnet.model_validate(row)
+    assert s.subnet is not None
     assert s.subnet.network_address == IPv4Address("10.0.2.0")
 
 
@@ -533,14 +534,14 @@ def test_subnet_coerce_non_dict_passthrough() -> None:
 def test_coerce_asserts_start_ip_addr_disagrees_with_start_hostaddr() -> None:
     # start_ip_addr decodes to 10.0.2.0 but start_hostaddr says 10.0.3.0
     row = {**_SUBNET_LIST_ROW, "start_ip_addr": "0a000200", "start_hostaddr": "10.0.3.0"}
-    with pytest.raises(ValidationError, match="start_ip_addr.*disagrees.*start_hostaddr"):
+    with pytest.raises(ValidationError, match=r"start_ip_addr.*disagrees.*start_hostaddr"):
         Subnet.model_validate(row)
 
 
 def test_coerce_asserts_end_ip_addr_disagrees_with_end_hostaddr() -> None:
     # end_ip_addr decodes to 10.0.2.255 but end_hostaddr says 10.0.3.255
     row = {**_SUBNET_LIST_ROW, "end_ip_addr": "0a0002ff", "end_hostaddr": "10.0.3.255"}
-    with pytest.raises(ValidationError, match="end_ip_addr.*disagrees.*end_hostaddr"):
+    with pytest.raises(ValidationError, match=r"end_ip_addr.*disagrees.*end_hostaddr"):
         Subnet.model_validate(row)
 
 
@@ -554,7 +555,7 @@ def test_coerce_asserts_end_inconsistent_with_start_plus_size() -> None:
 def test_coerce_asserts_prefix_size_mismatch() -> None:
     # subnet_prefix=25 → 128 addresses, but subnet_size says 256
     row = {**_SUBNET_LIST_ROW, "subnet_prefix": "25"}
-    with pytest.raises(ValidationError, match="subnet_size.*inconsistent.*subnet_prefix"):
+    with pytest.raises(ValidationError, match=r"subnet_size.*inconsistent.*subnet_prefix"):
         Subnet.model_validate(row)
 
 

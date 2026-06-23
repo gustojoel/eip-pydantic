@@ -94,17 +94,28 @@ explicit-preview-rules = true
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
     "SLF001",   # tests legitimately access private state (_dirty, _tracked)
+    "D101",     # test classes don't need docstrings
+    "D102",     # test methods don't need docstrings
     "D103",     # test functions don't need docstrings
     "S104",     # IPv4Address("0.0.0.0") is a parsing assertion, not socket binding
     "PLC0415",  # imports inside test helpers/fixtures are intentional
     "TC001",    # no need
+    "COM812",   # trailing commas in mock .mock(return_value=...) calls are a ruff style nit, not a bug
+    "RUF002",   # EN DASH in docstrings describing address ranges is intentional
+    "B017",     # pytest.raises(Exception) is intentional in error-contract tests
+    "PT011",    # pytest.raises(...) without match= is fine for broad error tests
+    "PT012",    # pytest.raises blocks with multiple statements are fine
+    "ERA001",   # separator comments (# ----) are false positives for commented-out code
+    "ARG001",   # unused fixture args are requested for pytest setup side-effects
 ]
 "scripts/*.py" = [
-    "T201",    # print is intentional in scripts
-    "E402",    # imports after sys.path setup are necessary
-    "INP001",  # scripts don't need __init__.py
-    "PLC0415", # imports after setup code are necessary
-    "D103",    # script helpers don't need docstrings
+    "T201",     # print is intentional in scripts
+    "E402",     # imports after sys.path setup are necessary
+    "INP001",   # scripts don't need __init__.py
+    "PLC0415",  # imports after setup code are necessary
+    "D103",     # script helpers don't need docstrings
+    "PLR0915",  # too-many-statements — convert_api_docs.py has one large function by design
+    "RUF001",   # EN DASH in string literals (page range output, doc text) is intentional
 ]
 "scripts/ipy.py" = [
     "F401",    # Space/Subnet/Session imports are intentional IPython namespace population

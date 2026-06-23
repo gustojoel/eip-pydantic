@@ -51,7 +51,7 @@ def test_subnet_outside_parent_range(
     nest a 10.0.0.0/24 inside it, which is clearly out of range.
     """
     assert block.subnet_id is not None
-    sn = write_session.create(
+    write_session.create(
         Subnet,
         site_id=block.site_id,
         parent_subnet_id=block.subnet_id,
@@ -76,7 +76,7 @@ def test_subnet_mismatched_site_and_parent(
     """
     assert block.subnet_id is not None
     net = _child_24s(test_network)[_IDX_CHILD]  # fits in block's range
-    sn = write_session.create(
+    write_session.create(
         Subnet,
         site_id=_NONEXISTENT_SITE_ID,     # wrong / non-existent space
         parent_subnet_id=block.subnet_id,  # parent in a different space
@@ -97,7 +97,7 @@ def test_pool_outside_subnet_range(
 ) -> None:
     """A pool whose IP range lies entirely outside the subnet is rejected."""
     assert child_subnet.subnet_id is not None
-    p = write_session.create(
+    write_session.create(
         Pool,
         subnet_id=child_subnet.subnet_id,
         start_ip_addr=IPv4Address("10.0.0.1"),   # nowhere near the test subnet
@@ -115,7 +115,7 @@ def test_pool_inverted_range(
 ) -> None:
     """A pool where start_addr > end_addr is rejected by the server."""
     base = int(_child_24s(test_network)[_IDX_CHILD].network_address)
-    p = write_session.create(
+    write_session.create(
         Pool,
         subnet_id=child_subnet.subnet_id,
         start_ip_addr=IPv4Address(base + 30),   # start is after end

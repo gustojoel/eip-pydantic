@@ -8,6 +8,7 @@ from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
 
 
+
 class DnsRr(SolidServerModel):
     """A DNS resource record (``dns_rr_list`` / ``dns_rr_info``).
 

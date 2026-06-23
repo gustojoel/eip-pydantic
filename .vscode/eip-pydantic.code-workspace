@@ -36,6 +36,9 @@
 		"explorer.excludeGitIgnore": true,
 		"files.exclude": {
 			"**/.pytest_cache": true
+		},
+		"chat.tools.terminal.autoApprove": {
+			"poetry": true
 		}
 	}
 

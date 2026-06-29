@@ -136,7 +136,7 @@ class DnsZone(SolidServerModel):
 
     dns_vpc_list: str | None = None
     aws_delegation_set: str | None = None
-    multistatus: str | None = None
+    multistatus: str | None = Field(None, frozen=True)
     ipmdns_type: str | None = None
 
     row_enabled: RowEnabled | None = Field(None, frozen=True)

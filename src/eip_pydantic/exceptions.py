@@ -40,3 +40,22 @@ class InternalError(SolidServerError):
     This exception represents a bug in the calling code, not an API or network
     error — e.g. calling an operation on a model class that does not support it.
     """
+
+
+class InvalidatedError(SolidServerError):
+    """Raised when a mutating or I/O method is called on an invalidated instance.
+
+    Instances are invalidated by :meth:`BaseSession.reset` after a failed flush,
+    at which point their state is unknown (partially written, partially not).
+    Field values remain readable for post-mortem inspection; any attempt to
+    mutate the object or build an HTTP request raises this exception.
+
+    Attributes:
+        obj: The invalidated model instance that triggered the error.
+    """
+
+    def __init__(self, obj: object) -> None:
+        self.obj = obj
+        super().__init__(
+            f"{type(obj).__name__} instance has been invalidated by session.reset()"
+        )

@@ -79,7 +79,7 @@ class DhcpRange(SolidServerModel):
     ip_addr: IPv4Address | None = None
     ip6_addr: str | None = None
     hostaddr: str | None = None
-    multistatus: str | None = None
+    multistatus: str | None = Field(None, frozen=True)
 
     row_enabled: RowEnabled | None = None
     class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)

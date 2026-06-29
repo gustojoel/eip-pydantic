@@ -42,8 +42,8 @@ class DhcpServer(SolidServerModel):
     hostaddr: str | None = None
 
     isolated: bool | None = None
-    tree_level: int | None = None
-    tree_path: str | None = None
+    tree_level: int | None = Field(None, frozen=True)
+    tree_path: str | None = Field(None, frozen=True)
     total_vdhcp_members: int | None = None
     vdhcp_members_name: str | None = None
     vdhcp_arch: str | None = None
@@ -61,7 +61,7 @@ class DhcpServer(SolidServerModel):
     cluster_hb_hostaddr: str | None = None
     cluster_ssh_keyring_id: int | None = None
 
-    multistatus: str | None = None
+    multistatus: str | None = Field(None, frozen=True)
     row_enabled: RowEnabled | None = Field(None, frozen=True)
     class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)
 

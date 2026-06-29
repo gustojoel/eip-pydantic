@@ -60,8 +60,8 @@ class DnsServer(SolidServerModel):
     gss_keytab_id: int | None = None
     gss_enabled: bool | None = None
 
-    tree_level: int | None = None
-    tree_path: str | None = None
+    tree_level: int | None = Field(None, frozen=True)
+    tree_path: str | None = Field(None, frozen=True)
     total_vdns_members: int | None = None
     vdns_members_name: str | None = None
     vdns_arch: str | None = None
@@ -103,7 +103,7 @@ class DnsServer(SolidServerModel):
     dns_vpc_list: str | None = None
     querylog_state: bool | None = None
     dns_synching: bool | None = None
-    multistatus: str | None = None
+    multistatus: str | None = Field(None, frozen=True)
 
     row_enabled: RowEnabled | None = Field(None, frozen=True)
     class_params: ClassParamDict = Field(default_factory=ClassParamDict.empty)

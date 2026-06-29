@@ -7,7 +7,7 @@ Model classes (:class:`eip_pydantic.models.space.Space`, :class:`Subnet`, :class
 
 from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.client import AsyncEipClient, EipClient
-from eip_pydantic.exceptions import ApiError, AuthenticationError, InternalError, NotFoundError, SolidServerError
+from eip_pydantic.exceptions import ApiError, AuthenticationError, InternalError, InvalidatedError, NotFoundError, SolidServerError
 from eip_pydantic.expressions import ColumnExpr, Condition, OrderByExpr, and_all
 from eip_pydantic.session import AsyncSession, BaseSession, FlushRecord, Session
 
@@ -25,6 +25,7 @@ __all__ = [
     "EipClient",
     "FlushRecord",
     "InternalError",
+    "InvalidatedError",
     "NotFoundError",
     "OrderByExpr",
     "Session",

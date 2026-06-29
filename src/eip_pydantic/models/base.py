@@ -10,6 +10,7 @@ from typing import Any, ClassVar, NamedTuple, cast
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from eip_pydantic.class_params import ClassParamDict
+from eip_pydantic.exceptions import InvalidatedError
 from eip_pydantic.expressions import ColumnCollection, ColumnExpr, Condition
 
 
@@ -112,6 +113,7 @@ class SolidServerModel(BaseModel):
 
     _dirty: set[str] = PrivateAttr(default_factory=set)
     _is_new: bool = PrivateAttr(default=False)
+    _invalidated: bool = PrivateAttr(default=False)
 
     # ---- Dirty tracking ------------------------------------------------------
 
@@ -119,6 +121,8 @@ class SolidServerModel(BaseModel):
         if name not in type(self).model_fields:
             super().__setattr__(name, value)
             return
+        if self._invalidated:
+            raise InvalidatedError(self)
 
         previous = getattr(self, name, _MISSING)
         super().__setattr__(name, value)   # raises ValidationError for frozen fields
@@ -144,6 +148,24 @@ class SolidServerModel(BaseModel):
             val = getattr(self, name)
             if isinstance(val, ClassParamDict) and not val.frozen:
                 val.clear_pending_deletes()
+
+    def invalidate(self) -> None:
+        """Mark this instance as invalidated after a session reset.
+
+        Once invalidated, any attempt to mutate the object or build an HTTP
+        request raises :exc:`InvalidatedError`.  Field values remain readable
+        for post-mortem inspection (e.g. to log which objects were affected).
+        """
+        self._invalidated = True
+
+    @property
+    def is_invalidated(self) -> bool:
+        """True if this instance has been invalidated by :meth:`BaseSession.reset`."""
+        return self._invalidated
+
+    def _check_not_invalidated(self) -> None:
+        if self._invalidated:
+            raise InvalidatedError(self)
 
     @property
     def is_dirty(self) -> bool:
@@ -244,6 +266,7 @@ class SolidServerModel(BaseModel):
         Returns:
             Mapping of parameter name → wire-format string for all dirty fields.
         """
+        self._check_not_invalidated()
         out: dict[str, str] = {}
         for field in self._dirty:
             val = getattr(self, field)
@@ -343,6 +366,7 @@ class SolidServerModel(BaseModel):
             ValueError: If the object has no primary key when ``update`` or
                 ``delete`` is requested, or if ``operation`` is unrecognised.
         """
+        self._check_not_invalidated()
         cfg = type(self).solid_config
         match operation:
             case "info":
@@ -407,6 +431,7 @@ class SolidServerModel(BaseModel):
         Raises:
             ValueError: If ``operation`` is not recognised.
         """
+        self._check_not_invalidated()
         match operation:
             case "create":
                 result = cast(Any, data[0] if isinstance(data, list) else data)

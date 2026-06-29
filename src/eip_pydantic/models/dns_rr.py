@@ -109,7 +109,7 @@ class DnsRr(SolidServerModel):
     dns_version: str | None = None
     dns_comment: str | None = None
 
-    multistatus: str | None = None
+    multistatus: str | None = Field(None, frozen=True)
     rr_auth_gsstsig: bool | None = None
     rr_last_update_days: int | None = None
 

@@ -136,6 +136,28 @@ class BaseSession:
         result = self._cache.get((cls, pk))
         return cast(T, result) if result is not None else None
 
+    def reset(self) -> None:
+        """Invalidate all tracked objects and clear the session caches.
+
+        Call this after a :meth:`flush` that raised an exception to discard the
+        session's in-memory state and return it to a clean, empty state.  Every
+        object that was in ``_cache`` or ``_new`` is marked as invalidated: their
+        field values remain readable (useful for post-mortem logging via
+        :attr:`last_flush`) but any attempt to mutate them or call
+        :meth:`~eip_pydantic.models.base.SolidServerModel.build_request` raises
+        :exc:`~eip_pydantic.exceptions.InvalidatedError`.
+
+        After ``reset()`` the session behaves as if it were freshly constructed:
+        ``_cache`` and ``_new`` are empty and ``last_flush`` is cleared.
+        """
+        for obj in self._cache.values():
+            obj.invalidate()
+        for obj in self._new:
+            obj.invalidate()
+        self._new.clear()
+        self._cache.clear()
+        self.last_flush = []
+
     @staticmethod
     def _build_list_params(
         model_cls: type[SolidServerModel],

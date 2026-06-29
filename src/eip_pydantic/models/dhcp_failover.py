@@ -60,7 +60,7 @@ class DhcpFailoverChannel(SolidServerModel):
     ip_addr: IPv4Address | None = Field(None, frozen=True)
     ip6_addr: str | None = None
     hostaddr: str | None = None
-    multistatus: str | None = None
+    multistatus: str | None = Field(None, frozen=True)
 
     @model_validator(mode="before")
     @classmethod

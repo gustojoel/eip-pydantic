@@ -74,6 +74,7 @@ class DnsZone(SolidServerModel):
             "dns_id":     "dns_id",
             "dnsview_id": "dnsview_id",
         }),
+        hex_ip_columns=frozenset({"ip_addr"}),
     )
 
     dnszone_id: int | None = Field(None, frozen=True)
@@ -205,16 +206,10 @@ class DnsZone(SolidServerModel):
                     if isinstance(val, ClassParamDict):
                         out[key] = val
                     elif key in cls.model_fields:
-                        out[key] = cls._as_str(val)
+                        out[key] = cls._as_str(val) if isinstance(val, (str, type(None))) else val
                     else:
                         out[key] = val
 
-        if not isinstance(out.get("class_params"), ClassParamDict):
-            out["class_params"] = ClassParamDict.from_blobs(
-                cls._as_str(v.get("dnszone_class_parameters")),
-                cls._as_str(v.get("dnszone_class_parameters_properties")),
-                cls._as_str(v.get("dnszone_class_parameters_inheritance_source")),
-                api_prefix="dnszone",
-            )
+        cls._coerce_class_params(out, v)
 
         return out

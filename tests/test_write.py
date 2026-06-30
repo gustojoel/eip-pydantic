@@ -12,6 +12,7 @@ from eip_pydantic.expressions import Condition
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
+from eip_pydantic.models.vrf import Vrf
 
 
 
@@ -1188,3 +1189,36 @@ def test_create_parent_no_id_raises() -> None:
     s = Session(HOST, *CREDS)
     with pytest.raises(ValueError, match="no id"):
         s.create(Subnet, space, subnet_name="x", subnet=IPv4Network("10.0.0.0/24"))
+
+
+# ---------------------------------------------------------------------------
+# Session.create / Session.new — class_params plain dict
+# ---------------------------------------------------------------------------
+
+def test_create_class_params_dict_survives_to_write_params() -> None:
+    s = Session(HOST, *CREDS)
+    vrf = s.create(Vrf, vrfobject_name="test", class_params={"foobar": "baz"})
+    _, _, params = vrf.build_request("create")
+    assert params.get("vrfobject_class_parameters") == "foobar=baz"
+
+
+def test_create_class_params_dict_roundtrip() -> None:
+    vrf = Vrf(vrfobject_name="test", class_params={"foo": "bar", "baz": "qux"})
+    assert vrf.class_params["foo"] == "bar"
+    assert vrf.class_params["baz"] == "qux"
+
+
+def test_model_validate_class_params_dict_preserved() -> None:
+    # model_validate with a plain dict (same path as Session.create)
+    vrf = Vrf.model_validate({"vrfobject_name": "test", "class_params": {"x": "1"}})
+    assert vrf.class_params["x"] == "1"
+
+
+def test_model_validate_class_params_blob_still_works() -> None:
+    # Ensure existing wire-blob path is not broken
+    vrf = Vrf.model_validate({
+        "vrfobject_name": "test",
+        "vrfobject_class_parameters": "k=v",
+        "vrfobject_class_parameters_properties": "k=set%2Cpropagate",
+    })
+    assert vrf.class_params["k"] == "v"

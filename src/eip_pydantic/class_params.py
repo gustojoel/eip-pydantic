@@ -52,6 +52,20 @@ class ClassParamDict:
         return cls({}, {}, {})
 
     @classmethod
+    def from_dict(cls, d: dict[str, object], api_prefix: str = "") -> "ClassParamDict":
+        """Build a ClassParamDict from a plain Python dict.
+
+        Each key is set with inheritance ``"inherited_or_set"`` and propagation
+        ``"propagate"`` — the same defaults as ``__setitem__``.  Values are
+        coerced to ``str``.  Used by ``_coerce_class_params`` to accept user-
+        supplied dicts in ``Session.create()`` / ``Vrf(class_params={...})``.
+        """
+        result = cls({}, {}, {}, api_prefix=api_prefix)
+        for k, v in d.items():
+            result[k] = str(v)
+        return result
+
+    @classmethod
     def from_blobs(
         cls,
         params_blob: str | None,
@@ -100,6 +114,9 @@ class ClassParamDict:
 
     def __getitem__(self, k: str) -> str:
         return self._params[k]
+
+    def get(self, k: str, default: str | None = None) -> str | None:
+        return self._params.get(k, default)
 
     def __setitem__(self, k: str, v: str) -> None:
         """Set a parameter using the default ``inherited_or_set`` inheritance mode.

@@ -161,6 +161,8 @@ The Session dispatches based on the verb returned by `build_class_request` / `bu
   - `create_fields: frozenset[str] | None` — fields accepted by `Session.create()`; `None` = unrestricted
   - `paths: MappingProxyType[str, str]` — API paths keyed by operation (`"list"`, `"info"`, `"count"`, `"add"`, `"delete"`, and model-specific keys)
   - `parent_fields: MappingProxyType[str, str]` — maps parent model's `pk_field` name → child field to inject; drives `Session.create(parent=…)` (see § `parent_fields`)
+  - `virtual_columns: frozenset[str]` — Python property names (not in `model_fields`) that map to same-named wire columns; expression builder treats these as real fields (no TAGS prefix). E.g. `Subnet`: `{"subnet_size", "subnet_prefix", "subnet_mask"}`.
+  - `hex_ip_columns: frozenset[str]` — wire column names whose values are 8-char hex-encoded IPv4 (e.g. `"0a000001"`). Expression builder returns `HexIpv4ColumnExpr` for these, auto-converting `IPv4Address` objects, dotted-decimal strings, and raw 8-char hex to the correct wire format in `WHERE` clauses. Covers both `model_fields` and virtual/property columns.
 - `c: ClassVar[ColumnCollection]` — expression-builder accessor; see § Expression builder
 - Forward-coercion helpers (wire → Python, used by `model_validator`s):
   - `_as_str(v)` — `""` / `"#"` → `None`
@@ -175,6 +177,9 @@ The Session dispatches based on the verb returned by `build_class_request` / `bu
 - Write-layer methods: `write_params()`, `build_class_request()`, `build_request()`, `parse_response()`, `apply_response()`, `mark_clean()`, `mark_new()`, `finalize_creation()`, `assign_id()`
 - Properties: `id`, `id_filter`, `is_dirty`, `is_new`, `tagged_class_parameters`
 - Class parameters are stored as `ClassParamDict` fields on each model (e.g. `Space.class_params`, `Space.parent_site_class_params`); there are no separate `class_parameters` / `class_parameters_properties` / `class_parameters_inheritance_source` properties on `SolidServerModel`
+- `ClassParamDict.from_dict(d, api_prefix)` — classmethod that builds a `ClassParamDict` from a plain Python `dict`; each key is set with `inherited_or_set` / `propagate` defaults. Used internally by `_coerce_class_params` so that `Session.create(cls, class_params={"key": "val"})` reaches the server correctly.
+- `column_expr_for(cls, name: str) -> ColumnExpr | None` — classmethod hook; return a model-specific `ColumnExpr` subclass for a given column name, or `None` to fall through to the default dispatch. Override in subclasses to handle computed/compound columns (e.g. `Subnet` overrides this for `"subnet"` to return `NetworkColumnExpr`).
+- `_coerce_class_params(cls, out, v)` — shared base helper called at the end of every `_coerce` validator; reads the three `{prefix}_class_parameters*` blobs from the raw wire dict `v` and writes a `ClassParamDict` into `out["class_params"]`. Handles three cases in priority order: already-a-`ClassParamDict` (model_dump round-trip), plain `dict` (user-supplied via `Session.create(class_params={...})`), or absent/string (parsed from wire blobs).
 
 ### Per-model coercion pattern
 
@@ -189,19 +194,35 @@ def _coerce(cls, data: Any) -> Any:
     v = cast(dict[str, Any], data)
     out: dict[str, Any] = {}
     for key, val in v.items():
+        if key in _BLOB_KEYS:   # skip raw class-param blobs; handled post-loop
+            continue
         match key:
             case "start_ip_addr" | "end_ip_addr":
-                out[key] = cls._as_ipv4(val)
+                out[key] = cls._as_hex_ipv4(val)
             case "subnet_id" | "subnet_size":
                 out[key] = cls._as_int(val)
             case "parent_subnet_id" | "vlmdomain_id":
                 out[key] = cls._as_nz_int(val)   # "0" = not set
             case _:
-                out[key] = cls._as_str(val) if key in cls.model_fields else val
+                if isinstance(val, ClassParamDict):
+                    out[key] = val              # preserve on model_dump round-trips
+                elif key in cls.model_fields:
+                    out[key] = cls._as_str(val) if isinstance(val, (str, type(None))) else val
+                else:
+                    out[key] = val              # pass tag_* extras through unchanged
+    cls._coerce_class_params(out, v)
     return out
 ```
 
-The `_` fallback strips `""` / `"#"` sentinels from declared `str` fields and passes unknown extras (e.g. `tag_*` fields from TAGS queries) through unchanged.
+Key rules for the `_` fallback:
+- Already a `ClassParamDict` → preserve as-is (model_dump round-trip).
+- Declared `model_fields` with a `str | None` wire value → strip `""` / `"#"` sentinels via `_as_str`.
+- Declared `model_fields` with a non-string value (e.g. a user-supplied `dict` for `class_params`) → pass through unchanged; `_coerce_class_params` handles it post-loop.
+- Unknown keys (e.g. `tag_*` TAGS fields, `model_extra`) → pass through unchanged.
+
+`_coerce_class_params` must be called **after** the loop (not inside it) so that `out["class_params"]` is already set if the user passed a plain `dict`, before `_coerce_class_params` decides which path to take.
+
+Each `_coerce` also defines a `_BLOB_KEYS` frozenset of the raw wire class-param blobs for that model (e.g. `subnet_class_parameters`, `subnet_class_parameters_properties`, `subnet_class_parameters_inheritance_source`) and skips them in the loop — they are consumed by `_coerce_class_params` directly from `v`.
 
 ### Expression builder (`expressions.py`)
 
@@ -212,11 +233,16 @@ The `_` fallback strips `""` / `"#"` sentinels from declared `str` fields and pa
 | `Condition` | Serialisable WHERE expression; produced by comparison operators on `ColumnExpr` |
 | `OrderByExpr` | Serialisable ORDER BY expression; produced by `.asc()` / `.desc()` on `ColumnExpr` |
 | `ColumnExpr` | A column reference; produced by `Model.c.<field_name>` |
+| `HexIpv4ColumnExpr` | `ColumnExpr` subclass for hex-encoded IPv4 columns; auto-converts `IPv4Address`, dotted strings, and raw 8-char hex to wire hex format in `WHERE` clauses |
+| `NetworkColumnExpr` | `ColumnExpr` subclass for network/CIDR columns; `== IPv4Network(...)` or `== 'x.x.x.x/n'` produces a compound `(start_ip_addr='<hex>') and (end_ip_addr='<hex>')` condition |
 
-**`Model.c` accessor** — each model class has a `c: ClassVar[ColumnCollection]` attribute.  Accessing `Model.c.field_name` checks `model_fields`:
+**`Model.c` accessor** — each model class has a `c: ClassVar[ColumnCollection]` attribute.  `ColumnCollection.__getattr__` dispatches in this order:
 
-- Field declared on the model → `ColumnExpr('field_name')` (no TAGS requirement)
-- Unknown name → `ColumnExpr('tag_{prefix}_{name}', required_tags={'prefix.name'})` where `prefix = Model.tags_prefix`
+1. `model.column_expr_for(name)` — model-specific override (e.g. `Subnet` returns `NetworkColumnExpr` for `"subnet"`); returns `None` to fall through.
+2. `name in solid_config.hex_ip_columns` → `HexIpv4ColumnExpr(name)` (no TAGS).
+3. `name in model_fields` → `ColumnExpr(name)` (no TAGS).
+4. `name in solid_config.virtual_columns` → `ColumnExpr(name)` (no TAGS; for Python properties like `subnet_size` that map directly to wire columns).
+5. Fallback → `ColumnExpr('tag_{prefix}_{name}', required_tags={'prefix.name'})` where `prefix = solid_config.tags_prefix`.
 
 **TAGS auto-injection** — `Session.list()` collects `required_tags` from any `Condition` / `OrderByExpr` passed as `where` / `orderby` and merges them (joined by `&`) into the `TAGS` query parameter before building the request.  Explicit `tags=` strings are appended.
 
@@ -225,10 +251,23 @@ The `_` fallback strips `""` / `"#"` sentinels from declared `str` fields and pa
 ```python
 Subnet.c.subnet_name == 'prod'          # subnet_name='prod'
 Subnet.c.subnet_name != 'legacy'        # subnet_name!='legacy'
-Subnet.c.subnet_size >= 128             # subnet_size>='128'
+Subnet.c.subnet_size >= 128             # subnet_size>='128'   (virtual column)
 Subnet.c.subnet_name.like('%prod%')     # subnet_name like '%prod%'
 Subnet.c.site_id.in_(['1','2'])         # site_id in ('1', '2')
 Subnet.c.subnet_class_name.is_null()    # subnet_class_name=''
+
+# Hex-encoded IPv4 columns (HexIpv4ColumnExpr) — values auto-converted to 8-char hex
+from ipaddress import IPv4Address
+Subnet.c.start_ip_addr == IPv4Address('10.0.0.1')  # start_ip_addr='0a000001'
+Subnet.c.start_ip_addr == '10.0.0.1'               # start_ip_addr='0a000001'
+Subnet.c.start_ip_addr == '0a000001'               # start_ip_addr='0a000001' (passthrough)
+Pool.c.start_ip_addr >= IPv4Address('10.0.0.10')   # start_ip_addr>='0a00000a'
+
+# Network/CIDR column (NetworkColumnExpr) — compound hex condition
+from ipaddress import IPv4Network
+Subnet.c.subnet == IPv4Network('10.16.1.0/24')
+# → (start_ip_addr='0a100100') and (end_ip_addr='0a1001ff')
+Subnet.c.subnet == '10.16.1.0/24'       # same, string CIDR accepted
 
 # Tagged class parameter (unknown field name)
 Subnet.c.foobar == 'baz'               # tag_network_foobar='baz'  + TAGS=network.foobar
@@ -242,12 +281,18 @@ Space.c.rank.desc()                     # tag_site_rank DESC        + TAGS=site.
 # → (site_name='prod') or (site_name='staging')   (no TAGS)
 ```
 
-**Adding a new model** — set `tags_prefix` in `solid_config` to the correct TAGS object-type name from the API reference table (§ TAGS, "TAGS object-type names"):
+**Adding a new model** — set these `solid_config` fields appropriately:
+
+- `tags_prefix` — TAGS object-type name from the API reference table (§ TAGS, "TAGS object-type names")
+- `hex_ip_columns` — frozenset of wire column names that carry 8-char hex IPv4 values (consult the model's `_coerce` validator; any `case` calling `_as_hex_ipv4` is a candidate)
+- `virtual_columns` — frozenset of Python property names that map directly to same-named wire columns but are not in `model_fields`
+- Override `column_expr_for` if any column needs a completely custom `ColumnExpr` subclass
 
 ```python
 class IpAddress(SolidServerModel):
     solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
-        tags_prefix="ip",   # from the TAGS table
+        tags_prefix="ip",
+        hex_ip_columns=frozenset({"ip_addr", "free_start_ip_addr", "free_end_ip_addr", ...}),
         ...
     )
 ```

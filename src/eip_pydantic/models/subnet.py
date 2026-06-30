@@ -2,7 +2,10 @@
 from datetime import datetime
 from ipaddress import IPv4Address, IPv4Network
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+
+if TYPE_CHECKING:
+    from eip_pydantic.expressions import ColumnExpr
 
 from pydantic import Field, model_validator
 
@@ -178,6 +181,13 @@ class Subnet(SolidServerModel):
             "site_id":   "site_id",           # Space parent
             "subnet_id": "parent_subnet_id",  # Subnet parent (block/VLSM)
         }),
+        virtual_columns=frozenset({
+            "subnet_size", "subnet_prefix", "subnet_mask",
+        }),
+        hex_ip_columns=frozenset({
+            "start_ip_addr", "end_ip_addr",
+            "parent_start_ip_addr", "parent_end_ip_addr",
+        }),
     )
 
     # ------------------------------------------------------------------
@@ -299,6 +309,17 @@ class Subnet(SolidServerModel):
     trace_creation_origin_usr_login: str | None = Field(None, frozen=True)
 
 
+
+    # ------------------------------------------------------------------
+    # Expression builder hooks
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def column_expr_for(cls, name: str) -> "ColumnExpr | None":
+        if name == "subnet":
+            from eip_pydantic.expressions import NetworkColumnExpr
+            return NetworkColumnExpr("subnet")
+        return None
 
     # ------------------------------------------------------------------
     # Write serialisation
@@ -431,7 +452,7 @@ class Subnet(SolidServerModel):
                     if isinstance(val, ClassParamDict):
                         out[key] = val
                     elif key in cls.model_fields:
-                        out[key] = cls._as_str(val)
+                        out[key] = cls._as_str(val) if isinstance(val, (str, type(None))) else val
                     else:
                         out[key] = val
 
@@ -451,13 +472,7 @@ class Subnet(SolidServerModel):
         if __debug__:
             cls._assert_wire_consistency(v, out)
 
-        if not isinstance(out.get("class_params"), ClassParamDict):
-            out["class_params"] = ClassParamDict.from_blobs(
-                cls._as_str(v.get("subnet_class_parameters")),
-                cls._as_str(v.get("subnet_class_parameters_properties")),
-                cls._as_str(v.get("subnet_class_parameters_inheritance_source")),
-                api_prefix="subnet",
-            )
+        cls._coerce_class_params(out, v)
         if "site_class_parameters" in v or "site_class_parameters_properties" in v:
             out["site_class_params"] = ClassParamDict.from_blobs(
                 cls._as_str(v.get("site_class_parameters")),

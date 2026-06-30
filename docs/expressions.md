@@ -169,6 +169,63 @@ explicitly; it raises `ValueError` on an empty iterable.
 
 ---
 
+## Special column types
+
+### IPv4 address columns
+
+Several model fields carry IPv4 addresses as 8-char hex on the wire (e.g.
+`start_ip_addr = "0a000001"` for `10.0.0.1`).  The expression builder detects
+these columns automatically and accepts `IPv4Address` objects, dotted-decimal
+strings, or raw 8-char hex — all are converted to the wire format before the
+`WHERE` clause is built:
+
+```python
+from ipaddress import IPv4Address
+
+# All three forms are equivalent:
+Subnet.c.start_ip_addr == IPv4Address("10.0.0.1")  # start_ip_addr='0a000001'
+Subnet.c.start_ip_addr == "10.0.0.1"               # start_ip_addr='0a000001'
+Subnet.c.start_ip_addr == "0a000001"               # start_ip_addr='0a000001'
+
+# Works with all comparison operators:
+Pool.c.start_ip_addr >= IPv4Address("10.0.0.10")   # start_ip_addr>='0a00000a'
+Pool.c.end_ip_addr <= IPv4Address("10.0.0.20")     # end_ip_addr<='0a000014'
+IpAddress.c.ip_addr.in_([IPv4Address("10.0.0.1"), IPv4Address("10.0.0.2")])
+```
+
+Models with hex IPv4 columns: `Subnet`, `Pool`, `IpAddress`, `DhcpScope`,
+`DhcpRange`, `DhcpStatic`, `DhcpServer`, `DnsServer`, `DnsView`, `DnsZone`.
+
+### IPv4 network / CIDR columns
+
+`Subnet.c.subnet` is a special compound column.  Comparing it with an
+`IPv4Network` or a CIDR string produces a compound `AND` condition that matches
+both the start and end hex addresses:
+
+```python
+from ipaddress import IPv4Network
+
+Subnet.c.subnet == IPv4Network("10.16.1.0/24")
+# → (start_ip_addr='0a100100') and (end_ip_addr='0a1001ff')
+
+Subnet.c.subnet == "10.16.1.0/24"    # string form also accepted
+Subnet.c.subnet == "10.16.1.0"       # host address — prefix inferred as /32
+```
+
+### Virtual columns (computed properties)
+
+Some properties are not stored as model fields but map directly to wire column
+names.  The expression builder accepts them as plain field references with no
+TAGS injection:
+
+```python
+Subnet.c.subnet_size >= 256     # subnet_size>='256'
+Subnet.c.subnet_prefix == "24"  # subnet_prefix='24'
+Subnet.c.subnet_mask == "255.255.255.0"
+```
+
+---
+
 ## TAGS — tagged class parameters
 
 EfficientIP's TAGS mechanism exposes arbitrary class parameters as first-class

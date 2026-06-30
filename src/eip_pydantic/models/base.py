@@ -39,6 +39,16 @@ class SolidServerConfig(NamedTuple):
             Example: ``{"site_id": "site_id", "subnet_id": "parent_subnet_id"}`` on
             ``Subnet`` means a ``Space`` parent injects ``site_id`` and a ``Subnet`` parent
             injects ``parent_subnet_id``.
+        virtual_columns: Names of Python properties (not in ``model_fields``) that map
+            directly to the same-named wire columns.  The expression builder treats these
+            as real fields (no TAGS injection, no ``tag_{prefix}_`` prefix).  Use for
+            computed properties like ``subnet_size``, ``subnet_prefix``.
+        hex_ip_columns: Wire column names whose values are hex-encoded IPv4 addresses
+            (e.g. ``'0a000001'`` for ``10.0.0.1``).  The expression builder returns a
+            :class:`~eip_pydantic.expressions.HexIpv4ColumnExpr` for these, which
+            auto-converts ``IPv4Address`` objects, dotted-decimal strings, and raw hex
+            strings to the 8-char hex format used by ``WHERE`` clauses.  Covers both
+            ``model_fields`` and virtual/property columns.
     """
     pk_field: str = ""
     class_param_prefix: str | None = None
@@ -46,6 +56,8 @@ class SolidServerConfig(NamedTuple):
     create_fields: frozenset[str] | None = None
     paths: MappingProxyType[str, str] = _EMPTY_PATHS
     parent_fields: MappingProxyType[str, str] = _EMPTY_PATHS
+    virtual_columns: frozenset[str] = frozenset()
+    hex_ip_columns: frozenset[str] = frozenset()
 
 
 def _make_notifier(dirty: set[str], field_name: str) -> Callable[[], None]:
@@ -218,6 +230,17 @@ class SolidServerModel(BaseModel):
         col: ColumnExpr = ColumnCollection(type(self)).__getattr__(type(self).solid_config.pk_field)
         return col == obj_id
 
+    @classmethod
+    def column_expr_for(cls, name: str) -> ColumnExpr | None:
+        """Return a custom ColumnExpr for ``name``, or ``None`` to use default dispatch.
+
+        Override in concrete models to handle virtual columns that require special
+        expression semantics (e.g. compound conditions from a single Python attribute).
+        The default returns ``None``, deferring to the standard ``ColumnCollection``
+        dispatch (``model_fields`` → ``virtual_columns`` → TAGS fallback).
+        """
+        return None
+
     # ---- New-object lifecycle ------------------------------------------------
 
     @property
@@ -251,6 +274,41 @@ class SolidServerModel(BaseModel):
         self.assign_id(pk)
         self._is_new = False
         self.mark_clean()
+
+    # ---- Coercion helpers (used by model _coerce validators) ----------------
+
+    @classmethod
+    def _coerce_class_params(cls, out: "dict[str, Any]", v: "dict[str, Any]") -> None:
+        """Populate ``out["class_params"]`` from the best available source.
+
+        Called at the end of each model's ``_coerce`` validator.  Handles three
+        cases, in priority order:
+
+        1. Already a ``ClassParamDict`` (e.g. from ``model_dump()`` round-trip) — left unchanged.
+        2. Plain dict (e.g. ``session.create(Vrf, class_params={"k": "v"})``) — converted
+           via :meth:`ClassParamDict.from_dict` so the user's values are preserved.
+        3. Anything else (``None``, a stringified blob, absent) — built from the model's
+           wire blob keys (``{prefix}_class_parameters`` etc.) via
+           :meth:`ClassParamDict.from_blobs`.
+
+        Uses ``cls.solid_config.class_param_prefix`` to derive the blob key names, so
+        this method works for every model without per-model customisation.
+        """
+        prefix = cls.solid_config.class_param_prefix
+        if prefix is None:
+            return
+        existing: object = out.get("class_params")
+        if isinstance(existing, ClassParamDict):
+            return
+        if isinstance(existing, dict):
+            out["class_params"] = ClassParamDict.from_dict(existing, api_prefix=prefix)
+        else:
+            out["class_params"] = ClassParamDict.from_blobs(
+                cls._as_str(v.get(f"{prefix}_class_parameters")),
+                cls._as_str(v.get(f"{prefix}_class_parameters_properties")),
+                cls._as_str(v.get(f"{prefix}_class_parameters_inheritance_source")),
+                api_prefix=prefix,
+            )
 
     # ---- Write serialisation (override in subclasses) -----------------------
 

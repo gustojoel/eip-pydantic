@@ -97,16 +97,10 @@ class Vrf(SolidServerModel):
                     if isinstance(val, ClassParamDict):
                         out[key] = val
                     elif key in cls.model_fields:
-                        out[key] = cls._as_str(val)
+                        out[key] = cls._as_str(val) if isinstance(val, (str, type(None))) else val
                     else:
                         out[key] = val
 
-        if not isinstance(out.get("class_params"), ClassParamDict):
-            out["class_params"] = ClassParamDict.from_blobs(
-                cls._as_str(v.get("vrfobject_class_parameters")),
-                cls._as_str(v.get("vrfobject_class_parameters_properties")),
-                cls._as_str(v.get("vrfobject_class_parameters_inheritance_source")),
-                api_prefix="vrfobject",
-            )
+        cls._coerce_class_params(out, v)
 
         return out

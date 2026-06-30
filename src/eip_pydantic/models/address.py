@@ -50,6 +50,13 @@ class IpAddress(SolidServerModel):
             "site_id":   "site_id",    # Space parent
             "subnet_id": "subnet_id",  # Subnet parent
         }),
+        hex_ip_columns=frozenset({
+            "ip_addr",
+            "free_start_ip_addr", "free_end_ip_addr",
+            "pool_start_ip_addr", "pool_end_ip_addr",
+            "subnet_start_ip_addr", "subnet_end_ip_addr",
+            "parent_subnet_start_ip_addr", "parent_subnet_end_ip_addr",
+        }),
     )
 
     # ------------------------------------------------------------------
@@ -295,17 +302,11 @@ class IpAddress(SolidServerModel):
                     if isinstance(val, ClassParamDict):
                         out[key] = val
                     elif key in cls.model_fields:
-                        out[key] = cls._as_str(val)
+                        out[key] = cls._as_str(val) if isinstance(val, (str, type(None))) else val
                     else:
                         out[key] = val
 
-        if not isinstance(out.get("class_params"), ClassParamDict):
-            out["class_params"] = ClassParamDict.from_blobs(
-                cls._as_str(v.get("ip_class_parameters")),
-                cls._as_str(v.get("ip_class_parameters_properties")),
-                cls._as_str(v.get("ip_class_parameters_inheritance_source")),
-                api_prefix="ip",
-            )
+        cls._coerce_class_params(out, v)
         if "site_class_parameters" in v or "site_class_parameters_properties" in v:
             out["site_class_params"] = ClassParamDict.from_blobs(
                 cls._as_str(v.get("site_class_parameters")),

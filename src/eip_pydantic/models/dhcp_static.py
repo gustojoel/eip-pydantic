@@ -47,6 +47,7 @@ class DhcpStatic(SolidServerModel):
             "delete": "rest/dhcp_static_delete",
         }),
         parent_fields=MappingProxyType({"dhcpscope_id": "dhcpscope_id"}),
+        hex_ip_columns=frozenset({"dhcphost_ip_addr", "ip_addr"}),
     )
 
     dhcphost_id: int | None = Field(None, frozen=True)
@@ -148,16 +149,10 @@ class DhcpStatic(SolidServerModel):
                     if isinstance(val, ClassParamDict):
                         out[key] = val
                     elif key in cls.model_fields:
-                        out[key] = cls._as_str(val)
+                        out[key] = cls._as_str(val) if isinstance(val, (str, type(None))) else val
                     else:
                         out[key] = val
 
-        if not isinstance(out.get("class_params"), ClassParamDict):
-            out["class_params"] = ClassParamDict.from_blobs(
-                cls._as_str(v.get("dhcphost_class_parameters")),
-                cls._as_str(v.get("dhcphost_class_parameters_properties")),
-                cls._as_str(v.get("dhcphost_class_parameters_inheritance_source")),
-                api_prefix="dhcphost",
-            )
+        cls._coerce_class_params(out, v)
 
         return out

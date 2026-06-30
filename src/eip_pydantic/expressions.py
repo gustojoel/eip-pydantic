@@ -4,6 +4,7 @@
 """
 
 from collections.abc import Iterable
+from ipaddress import IPv4Address, IPv4Network
 from typing import TYPE_CHECKING
 
 
@@ -303,6 +304,81 @@ class ColumnExpr:
         return OrderByExpr(f"{self._field_name} DESC", self._required_tags)
 
 
+class HexIpv4ColumnExpr(ColumnExpr):
+    """ColumnExpr for hex-encoded IPv4 address wire columns.
+
+    Accepts ``IPv4Address`` objects, dotted-decimal strings (``'10.0.0.1'``),
+    or raw 8-char hex strings (``'0a000001'``).  All are normalised to the
+    8-character lowercase hex format the SolidServer API uses in ``WHERE``
+    clauses.  Unknown formats are passed through as-is.
+
+    All six comparison operators (``==``, ``!=``, ``<``, ``<=``, ``>``,
+    ``>=``) and ``in_()`` convert values to hex.  Use for any field decoded
+    with ``_as_hex_ipv4`` in the model ``_coerce`` validator.
+    """
+
+    __hash__ = ColumnExpr.__hash__
+
+    @staticmethod
+    def _to_hex(value: object) -> str:
+        if isinstance(value, IPv4Address):
+            return f"{int(value):08x}"
+        s = str(value)
+        if len(s) == 8 and all(c in "0123456789abcdefABCDEF" for c in s):
+            return s.lower()
+        try:
+            return f"{int(IPv4Address(s)):08x}"
+        except ValueError:
+            return s
+
+    def __eq__(self, other: object) -> Condition:  # type: ignore[override]
+        return Condition(f"{self._field_name}={_quote(self._to_hex(other))}", self._required_tags)
+
+    def __ne__(self, other: object) -> Condition:  # type: ignore[override]
+        return Condition(f"{self._field_name}!={_quote(self._to_hex(other))}", self._required_tags)
+
+    def __lt__(self, other: object) -> Condition:
+        return Condition(f"{self._field_name}<{_quote(self._to_hex(other))}", self._required_tags)
+
+    def __le__(self, other: object) -> Condition:
+        return Condition(f"{self._field_name}<={_quote(self._to_hex(other))}", self._required_tags)
+
+    def __gt__(self, other: object) -> Condition:
+        return Condition(f"{self._field_name}>{_quote(self._to_hex(other))}", self._required_tags)
+
+    def __ge__(self, other: object) -> Condition:
+        return Condition(f"{self._field_name}>={_quote(self._to_hex(other))}", self._required_tags)
+
+    def in_(self, values: Iterable[object]) -> Condition:
+        """Membership test with hex conversion for each value."""
+        quoted = ", ".join(_quote(self._to_hex(v)) for v in values)
+        return Condition(f"{self._field_name} in ({quoted})", self._required_tags)
+
+
+class NetworkColumnExpr(ColumnExpr):
+    """ColumnExpr for IPv4 network columns (e.g. ``Subnet.c.subnet``).
+
+    ``== IPv4Network(...)`` or ``== '10.0.0.0/24'`` produces a compound
+    ``(start_ip_addr='<hex>') and (end_ip_addr='<hex>')`` condition matching
+    the hex wire format used by ``ip_block_subnet_list``.  Any other value
+    falls back to a plain equality condition on the declared field name.
+    """
+
+    __hash__ = ColumnExpr.__hash__
+
+    def __eq__(self, other: object) -> Condition:  # type: ignore[override]
+        try:
+            net = other if isinstance(other, IPv4Network) else IPv4Network(str(other), strict=False)
+        except ValueError:
+            return super().__eq__(other)
+        start_hex = f"{int(net.network_address):08x}"
+        end_hex = f"{int(net.broadcast_address):08x}"
+        return (
+            Condition(f"start_ip_addr={_quote(start_hex)}") &
+            Condition(f"end_ip_addr={_quote(end_hex)}")
+        )
+
+
 class ColumnCollection:
     """Attribute namespace that produces ``ColumnExpr`` instances for a model class.
 
@@ -310,20 +386,30 @@ class ColumnCollection:
 
     The dispatch logic is:
 
-    * If the attribute name appears in ``Model.model_fields`` (a declared
-      Pydantic field), return a plain ``ColumnExpr`` with no ``required_tags``.
-    * Otherwise treat it as a tagged class parameter: return a ``ColumnExpr``
-      whose ``_field_name`` is ``tag_{prefix}_{name}`` and whose
-      ``required_tags`` is ``frozenset({'{prefix}.{name}'})``.  ``prefix`` comes
-      from ``Model.tags_prefix`` (e.g. ``"network"`` for ``Subnet``, ``"site"``
-      for ``Space``).  If ``tags_prefix`` is empty the name is passed through
-      unchanged.
+    1. ``Model.column_expr_for(name)`` — model-specific override (e.g.
+       ``Subnet.c.subnet`` returns a :class:`NetworkColumnExpr`).
+    2. ``Model.solid_config.hex_ip_columns`` — hex-encoded IPv4 wire columns
+       → :class:`HexIpv4ColumnExpr` (auto-converts ``IPv4Address`` / dotted
+       strings to 8-char hex before quoting).
+    3. ``Model.model_fields`` — declared Pydantic fields → plain ``ColumnExpr``.
+    4. ``Model.solid_config.virtual_columns`` — Python properties that map
+       directly to same-named wire columns → plain ``ColumnExpr``.
+    4. Tagged class parameter fallback → ``ColumnExpr('tag_{prefix}_{name}',
+       required_tags={'{prefix}.{name}'})``.
 
     Examples::
 
         # Real field — no TAGS involvement
         Subnet.c.subnet_name          # ColumnExpr('subnet_name')
         Subnet.c.site_id == '7'       # Condition("site_id='7'", required_tags=frozenset())
+
+        # Virtual column (property, not in model_fields) — no TAGS
+        Subnet.c.subnet_size >= 256   # Condition("subnet_size>='256'")
+        Subnet.c.start_ip_addr == '0a000000'  # Condition("start_ip_addr='0a000000'")
+
+        # Network virtual column — compound hex condition
+        Subnet.c.subnet == '10.0.0.0/24'
+        # → (start_ip_addr='0a000000') and (end_ip_addr='0a0000ff')
 
         # Tagged class parameter — TAGS auto-injected by Session.list()
         Subnet.c.foobar               # ColumnExpr('tag_network_foobar',
@@ -345,7 +431,14 @@ class ColumnCollection:
         if name.startswith("_"):
             raise AttributeError(name)
         model_cls = self._model_cls
+        custom = model_cls.column_expr_for(name)
+        if custom is not None:
+            return custom
+        if name in model_cls.solid_config.hex_ip_columns:
+            return HexIpv4ColumnExpr(name)
         if name in model_cls.model_fields:
+            return ColumnExpr(name)
+        if name in model_cls.solid_config.virtual_columns:
             return ColumnExpr(name)
         prefix = model_cls.solid_config.tags_prefix
         if not prefix:

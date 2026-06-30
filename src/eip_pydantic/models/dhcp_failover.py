@@ -31,6 +31,7 @@ class DhcpFailoverChannel(SolidServerModel):
             "info":  "rest/dhcp_failover_info",
             "count": "rest/dhcp_failover_count",
         }),
+        hex_ip_columns=frozenset({"ip_addr"}),
     )
 
     dhcpfailover_id: int | None = Field(None, frozen=True)

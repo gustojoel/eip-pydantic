@@ -3,10 +3,13 @@
 import httpx
 import pytest
 import respx
+from ipaddress import IPv4Address, IPv4Network
 
 from eip_pydantic import Session
-from eip_pydantic.expressions import ColumnCollection, OrderByExpr
+from eip_pydantic.expressions import ColumnCollection, HexIpv4ColumnExpr, NetworkColumnExpr, OrderByExpr
+from eip_pydantic.models.address import IpAddress
 from eip_pydantic.models.base import SolidServerModel
+from eip_pydantic.models.pool import Pool
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import Subnet
 
@@ -260,3 +263,144 @@ def test_column_collection_no_prefix_unknown_field() -> None:
     cond = col.any_field == "x"
     assert str(cond) == "any_field='x'"
     assert cond.required_tags == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Virtual columns (subnet_size, subnet_prefix, start_ip_addr, end_ip_addr)
+# ---------------------------------------------------------------------------
+
+def test_virtual_column_subnet_size_no_tags() -> None:
+    cond = Subnet.c.subnet_size >= 256
+    assert str(cond) == "subnet_size>='256'"
+    assert cond.required_tags == frozenset()
+
+
+def test_virtual_column_subnet_prefix_no_tags() -> None:
+    cond = Subnet.c.subnet_prefix == 24
+    assert str(cond) == "subnet_prefix='24'"
+    assert cond.required_tags == frozenset()
+
+
+def test_virtual_column_subnet_mask_no_tags() -> None:
+    cond = Subnet.c.subnet_mask == "255.255.255.0"
+    assert str(cond) == "subnet_mask='255.255.255.0'"
+    assert cond.required_tags == frozenset()
+
+
+def test_virtual_column_start_ip_addr_no_tags() -> None:
+    cond = Subnet.c.start_ip_addr == "0a000000"
+    assert str(cond) == "start_ip_addr='0a000000'"
+    assert cond.required_tags == frozenset()
+
+
+def test_virtual_column_end_ip_addr_no_tags() -> None:
+    cond = Subnet.c.end_ip_addr == "0a0000ff"
+    assert str(cond) == "end_ip_addr='0a0000ff'"
+    assert cond.required_tags == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Subnet.c.subnet — NetworkColumnExpr
+# ---------------------------------------------------------------------------
+
+def test_subnet_column_returns_network_column_expr() -> None:
+    assert isinstance(Subnet.c.subnet, NetworkColumnExpr)
+
+
+def test_subnet_column_eq_ipv4network() -> None:
+    cond = Subnet.c.subnet == IPv4Network("10.16.1.0/24")
+    assert str(cond) == "(start_ip_addr='0a100100') and (end_ip_addr='0a1001ff')"
+    assert cond.required_tags == frozenset()
+
+
+def test_subnet_column_eq_cidr_string() -> None:
+    cond = Subnet.c.subnet == "10.0.0.0/24"
+    assert str(cond) == "(start_ip_addr='0a000000') and (end_ip_addr='0a0000ff')"
+    assert cond.required_tags == frozenset()
+
+
+def test_subnet_column_eq_host_prefix() -> None:
+    cond = Subnet.c.subnet == "192.168.1.5/32"
+    assert str(cond) == "(start_ip_addr='c0a80105') and (end_ip_addr='c0a80105')"
+
+
+def test_subnet_column_eq_slash16() -> None:
+    cond = Subnet.c.subnet == "10.0.0.0/16"
+    assert str(cond) == "(start_ip_addr='0a000000') and (end_ip_addr='0a00ffff')"
+
+
+# ---------------------------------------------------------------------------
+# HexIpv4ColumnExpr — hex-coded IPv4 address columns
+# ---------------------------------------------------------------------------
+
+def test_hex_ip_column_returns_hex_column_expr() -> None:
+    assert isinstance(Subnet.c.start_ip_addr, HexIpv4ColumnExpr)
+    assert isinstance(Subnet.c.end_ip_addr, HexIpv4ColumnExpr)
+    assert isinstance(Subnet.c.parent_start_ip_addr, HexIpv4ColumnExpr)
+    assert isinstance(Pool.c.start_ip_addr, HexIpv4ColumnExpr)
+    assert isinstance(IpAddress.c.ip_addr, HexIpv4ColumnExpr)
+
+
+def test_hex_ip_eq_ipv4address() -> None:
+    cond = Subnet.c.start_ip_addr == IPv4Address("10.0.0.0")
+    assert str(cond) == "start_ip_addr='0a000000'"
+    assert cond.required_tags == frozenset()
+
+
+def test_hex_ip_eq_dotted_string() -> None:
+    cond = Subnet.c.start_ip_addr == "10.0.0.1"
+    assert str(cond) == "start_ip_addr='0a000001'"
+
+
+def test_hex_ip_eq_raw_hex_passthrough() -> None:
+    cond = Subnet.c.start_ip_addr == "0a000000"
+    assert str(cond) == "start_ip_addr='0a000000'"
+
+
+def test_hex_ip_ne() -> None:
+    cond = Subnet.c.start_ip_addr != "10.0.0.0"
+    assert str(cond) == "start_ip_addr!='0a000000'"
+
+
+def test_hex_ip_ge() -> None:
+    cond = Subnet.c.start_ip_addr >= "10.0.0.0"
+    assert str(cond) == "start_ip_addr>='0a000000'"
+
+
+def test_hex_ip_le() -> None:
+    cond = Subnet.c.end_ip_addr <= "10.255.255.255"
+    assert str(cond) == "end_ip_addr<='0affffff'"
+
+
+def test_hex_ip_in_() -> None:
+    cond = Subnet.c.start_ip_addr.in_(["10.0.0.0", "10.1.0.0"])
+    assert str(cond) == "start_ip_addr in ('0a000000', '0a010000')"
+
+
+def test_hex_ip_model_field_also_hex() -> None:
+    # parent_start_ip_addr is a model_field (IPv4Address | None) but still hex-encoded
+    cond = Subnet.c.parent_start_ip_addr == IPv4Address("192.168.1.0")
+    assert str(cond) == "parent_start_ip_addr='c0a80100'"
+
+
+def test_hex_ip_pool_start() -> None:
+    cond = Pool.c.start_ip_addr == "172.16.0.1"
+    assert str(cond) == "start_ip_addr='ac100001'"
+
+
+def test_hex_ip_address_ip_addr_virtual() -> None:
+    # ip_addr is a virtual property on IpAddress (not in model_fields)
+    cond = IpAddress.c.ip_addr == IPv4Address("10.84.20.5")
+    assert str(cond) == "ip_addr='0a541405'"
+
+
+@respx.mock
+def test_session_list_subnet_column_sends_hex_where() -> None:
+    route = respx.get(f"{BASE}rest/ip_block_subnet_list").mock(
+        return_value=httpx.Response(200, json=[_SUBNET_ROW]),
+    )
+    with Session(HOST, *CREDS) as s:
+        s.list(Subnet, where=Subnet.c.subnet == "10.0.0.0/24")
+    params = route.calls.last.request.url.params
+    assert params["WHERE"] == "(start_ip_addr='0a000000') and (end_ip_addr='0a0000ff')"
+    assert "TAGS" not in params

@@ -2,7 +2,7 @@
 
 import builtins
 import contextlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from ipaddress import IPv4Address
 from types import TracebackType
 from typing import Any, NamedTuple, Self, TypeVar, cast
@@ -135,6 +135,41 @@ class BaseSession:
     def _get_cache(self, cls: type[T], pk: int) -> T | None:
         result = self._cache.get((cls, pk))
         return cast(T, result) if result is not None else None
+
+    def _iter_flush_work(
+        self,
+    ) -> Iterator[tuple[SolidServerModel, str, str, str, dict[str, str]]]:
+        """Yield ``(obj, operation, verb, path, params)`` for every pending write.
+
+        Iterates ``_new`` first (POSTs), then ``_cache`` (PUTs for dirty objects).
+        Called by both :meth:`Session.flush` and :meth:`AsyncSession.flush`.
+        """
+        for obj in self._new:
+            if obj.is_new:
+                verb, path, params = obj.build_request("create")
+                yield obj, "create", verb, path, params
+        for obj in self._cache.values():
+            if obj.is_dirty:
+                verb, path, params = obj.build_request("update")
+                yield obj, "update", verb, path, params
+
+    def _apply_flush_item(
+        self,
+        records: list[FlushRecord],
+        flushed: list[SolidServerModel],
+        obj: SolidServerModel,
+        operation: str,
+        verb: str,
+        path: str,
+        params: dict[str, str],
+        raw: Any,
+    ) -> None:
+        """Record a successful flush item, apply the server response, update the cache."""
+        records.append(FlushRecord(obj, verb, path, params, raw, None))
+        obj.apply_response(operation, raw)
+        if operation == "create":
+            self._put_cache(obj)
+        flushed.append(obj)
 
     def reset(self) -> None:
         """Invalidate all tracked objects and clear the session caches.
@@ -297,10 +332,9 @@ class Session(BaseSession):
     def list(
         self,
         cls: type[T],
-        *,
         where: str | Condition | Iterable[Condition] | None = None,
+        *,
         orderby: str | OrderByExpr | None = None,
-        select: str | None = None,
         offset: int | None = None,
         limit: int | None = None,
         tags: str | None = None,
@@ -319,7 +353,6 @@ class Session(BaseSession):
                 ``Condition`` objects that are AND-ed together.
             orderby: Sort clause — a raw string or an ``OrderByExpr`` built
                 with ``cls.c.<field>.asc()`` / ``.desc()``.
-            select: Comma-separated list of columns to return.
             offset: Number of rows to skip.
             limit: Maximum number of rows to return.
             tags: Explicit TAGS expression, e.g. ``"site.my_param"``.  When
@@ -332,7 +365,7 @@ class Session(BaseSession):
             Validated model instances in the order returned by the API.
         """
         verb, path, params = self._build_list_params(
-            cls, where, orderby, select, offset, limit, tags, no_parent_class_param,
+            cls, where, orderby, None, offset, limit, tags, no_parent_class_param,
         )
         raw = self._dispatch(verb, path, params)
         return self._absorb_list_result(cls, cast(list[T], cls.parse_response("list", raw)))
@@ -340,12 +373,8 @@ class Session(BaseSession):
     def one(
         self,
         cls: type[T],
-        *,
         where: str | Condition | Iterable[Condition] | None = None,
-        orderby: str | OrderByExpr | None = None,
-        select: str | None = None,
-        offset: int | None = None,
-        limit: int | None = None,
+        *,
         tags: str | None = None,
         no_parent_class_param: bool = False,
     ) -> T:
@@ -355,8 +384,7 @@ class Session(BaseSession):
             ValueError: If the result set is not exactly one object.
         """
         return self._check_one(
-            self.list(cls, where=where, orderby=orderby, select=select,
-                      offset=offset, limit=limit, tags=tags,
+            self.list(cls, where=where, tags=tags,
                       no_parent_class_param=no_parent_class_param),
             cls,
         )
@@ -364,12 +392,8 @@ class Session(BaseSession):
     def one_or_none(
         self,
         cls: type[T],
-        *,
         where: str | Condition | Iterable[Condition] | None = None,
-        orderby: str | OrderByExpr | None = None,
-        select: str | None = None,
-        offset: int | None = None,
-        limit: int | None = None,
+        *,
         tags: str | None = None,
         no_parent_class_param: bool = False,
     ) -> T | None:
@@ -379,8 +403,7 @@ class Session(BaseSession):
             ValueError: If the result set contains more than one object.
         """
         return self._check_one_or_none(
-            self.list(cls, where=where, orderby=orderby, select=select,
-                      offset=offset, limit=limit, tags=tags,
+            self.list(cls, where=where, tags=tags,
                       no_parent_class_param=no_parent_class_param),
             cls,
         )
@@ -414,8 +437,8 @@ class Session(BaseSession):
     def count(
         self,
         cls: type[T],
-        *,
         where: str | Condition | Iterable[Condition] | None = None,
+        *,
         tags: str | None = None,
         no_parent_class_param: bool = False,
     ) -> int:
@@ -512,15 +535,11 @@ class Session(BaseSession):
     def flush(self) -> builtins.list[SolidServerModel]:
         """Create or update all objects that are new or dirty.
 
-        Pass 1 — iterates ``_new`` in insertion order and POSTs each object
-        whose ``is_new`` flag is still set (guard against retry after a
-        partial failure).  Newly created objects are moved into the cache.
+        Pass 1 — POSTs each ``_new`` object whose ``is_new`` flag is still set
+        (guards against retry after partial failure).  Newly created objects
+        are moved into the identity cache.
 
-        Pass 2 — iterates the cache in insertion order and PUTs every object
-        whose ``is_dirty`` flag is set.
-
-        After each successful write the object's state is reset via
-        ``apply_response()``.
+        Pass 2 — PUTs every cache object whose ``is_dirty`` flag is set.
 
         Returns:
             The list of objects that were written (created or updated).
@@ -533,37 +552,15 @@ class Session(BaseSession):
         records: list[FlushRecord] = []
         flushed: list[SolidServerModel] = []
         try:
-            for obj in self._new:
-                if obj.is_new:
-                    verb, path, params = obj.build_request("create")
-                    raw: Any = None
-                    err: BaseException | None = None
-                    try:
-                        raw = self._dispatch(verb, path, params)
-                    except BaseException as exc:
-                        err = exc
-                        records.append(FlushRecord(obj, verb, path, params, raw, err))
-                        self.last_flush = records
-                        raise
-                    records.append(FlushRecord(obj, verb, path, params, raw, err))
-                    obj.apply_response("create", raw)
-                    self._put_cache(obj)
-                    flushed.append(obj)
-            for obj in self._cache.values():
-                if obj.is_dirty:
-                    verb, path, params = obj.build_request("update")
-                    raw = None
-                    err = None
-                    try:
-                        raw = self._dispatch(verb, path, params)
-                    except BaseException as exc:
-                        err = exc
-                        records.append(FlushRecord(obj, verb, path, params, raw, err))
-                        self.last_flush = records
-                        raise
-                    records.append(FlushRecord(obj, verb, path, params, raw, err))
-                    obj.apply_response("update", raw)
-                    flushed.append(obj)
+            for obj, operation, verb, path, params in self._iter_flush_work():
+                raw: Any = None
+                try:
+                    raw = self._dispatch(verb, path, params)
+                except BaseException as exc:
+                    records.append(FlushRecord(obj, verb, path, params, raw, exc))
+                    self.last_flush = records
+                    raise
+                self._apply_flush_item(records, flushed, obj, operation, verb, path, params, raw)
         finally:
             self.last_flush = records
         return flushed
@@ -644,10 +641,9 @@ class AsyncSession(BaseSession):
     async def list(
         self,
         cls: type[T],
-        *,
         where: str | Condition | Iterable[Condition] | None = None,
+        *,
         orderby: str | OrderByExpr | None = None,
-        select: str | None = None,
         offset: int | None = None,
         limit: int | None = None,
         tags: str | None = None,
@@ -662,18 +658,19 @@ class AsyncSession(BaseSession):
                 ``Condition`` objects that are AND-ed together.
             orderby: Sort clause — a raw string or an ``OrderByExpr`` built
                 with ``cls.c.<field>.asc()`` / ``.desc()``.
-            select: Comma-separated column list.
-            offset: Rows to skip.
-            limit: Maximum rows to return.
-            tags: Explicit TAGS expression.  Auto-collected tags from
-                ``where`` / ``orderby`` expressions are merged in automatically.
-            no_parent_class_param: Exclude parent class parameters.
+            offset: Number of rows to skip.
+            limit: Maximum number of rows to return.
+            tags: Explicit TAGS expression, e.g. ``"site.my_param"``.  When
+                ``where`` or ``orderby`` reference tagged class parameters the
+                required TAGS are injected automatically; this argument adds
+                additional tags on top.
+            no_parent_class_param: Exclude parent class parameters from output.
 
         Returns:
             Validated model instances in the order returned by the API.
         """
         verb, path, params = self._build_list_params(
-            cls, where, orderby, select, offset, limit, tags, no_parent_class_param,
+            cls, where, orderby, None, offset, limit, tags, no_parent_class_param,
         )
         raw = await self._dispatch(verb, path, params)
         return self._absorb_list_result(cls, cast(list[T], cls.parse_response("list", raw)))
@@ -681,12 +678,8 @@ class AsyncSession(BaseSession):
     async def one(
         self,
         cls: type[T],
-        *,
         where: str | Condition | Iterable[Condition] | None = None,
-        orderby: str | OrderByExpr | None = None,
-        select: str | None = None,
-        offset: int | None = None,
-        limit: int | None = None,
+        *,
         tags: str | None = None,
         no_parent_class_param: bool = False,
     ) -> T:
@@ -696,8 +689,7 @@ class AsyncSession(BaseSession):
             ValueError: If the result set is not exactly one object.
         """
         return self._check_one(
-            await self.list(cls, where=where, orderby=orderby, select=select,
-                            offset=offset, limit=limit, tags=tags,
+            await self.list(cls, where=where, tags=tags,
                             no_parent_class_param=no_parent_class_param),
             cls,
         )
@@ -705,12 +697,8 @@ class AsyncSession(BaseSession):
     async def one_or_none(
         self,
         cls: type[T],
-        *,
         where: str | Condition | Iterable[Condition] | None = None,
-        orderby: str | OrderByExpr | None = None,
-        select: str | None = None,
-        offset: int | None = None,
-        limit: int | None = None,
+        *,
         tags: str | None = None,
         no_parent_class_param: bool = False,
     ) -> T | None:
@@ -720,8 +708,7 @@ class AsyncSession(BaseSession):
             ValueError: If the result set contains more than one object.
         """
         return self._check_one_or_none(
-            await self.list(cls, where=where, orderby=orderby, select=select,
-                            offset=offset, limit=limit, tags=tags,
+            await self.list(cls, where=where, tags=tags,
                             no_parent_class_param=no_parent_class_param),
             cls,
         )
@@ -750,8 +737,8 @@ class AsyncSession(BaseSession):
     async def count(
         self,
         cls: type[T],
-        *,
         where: str | Condition | Iterable[Condition] | None = None,
+        *,
         tags: str | None = None,
         no_parent_class_param: bool = False,
     ) -> int:
@@ -845,48 +832,28 @@ class AsyncSession(BaseSession):
     async def flush(self) -> builtins.list[SolidServerModel]:
         """Create or update all objects that are new or dirty.
 
+        Async counterpart of :meth:`Session.flush` — identical contract and
+        error-handling behaviour; the only difference is ``await _dispatch``.
+
         Returns:
             The list of objects that were written (created or updated).
 
         Raises:
             Any exception raised by the underlying HTTP client.  ``last_flush``
-            is updated before the exception propagates so the caller can inspect
-            what was attempted.
+            is updated before the exception propagates.
         """
         records: list[FlushRecord] = []
         flushed: list[SolidServerModel] = []
         try:
-            for obj in self._new:
-                if obj.is_new:
-                    verb, path, params = obj.build_request("create")
-                    raw: Any = None
-                    err: BaseException | None = None
-                    try:
-                        raw = await self._dispatch(verb, path, params)
-                    except BaseException as exc:
-                        err = exc
-                        records.append(FlushRecord(obj, verb, path, params, raw, err))
-                        self.last_flush = records
-                        raise
-                    records.append(FlushRecord(obj, verb, path, params, raw, err))
-                    obj.apply_response("create", raw)
-                    self._put_cache(obj)
-                    flushed.append(obj)
-            for obj in self._cache.values():
-                if obj.is_dirty:
-                    verb, path, params = obj.build_request("update")
-                    raw = None
-                    err = None
-                    try:
-                        raw = await self._dispatch(verb, path, params)
-                    except BaseException as exc:
-                        err = exc
-                        records.append(FlushRecord(obj, verb, path, params, raw, err))
-                        self.last_flush = records
-                        raise
-                    records.append(FlushRecord(obj, verb, path, params, raw, err))
-                    obj.apply_response("update", raw)
-                    flushed.append(obj)
+            for obj, operation, verb, path, params in self._iter_flush_work():
+                raw: Any = None
+                try:
+                    raw = await self._dispatch(verb, path, params)
+                except BaseException as exc:
+                    records.append(FlushRecord(obj, verb, path, params, raw, exc))
+                    self.last_flush = records
+                    raise
+                self._apply_flush_item(records, flushed, obj, operation, verb, path, params, raw)
         finally:
             self.last_flush = records
         return flushed

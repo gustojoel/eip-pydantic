@@ -67,16 +67,18 @@ python scripts/convert_api_docs.py api_full.txt
 
 `Session` (in `session.py`) is the primary API. It owns an `EipClient` internally and exposes:
 
-- `session.list(cls, *, where, orderby, select, offset, limit, tags, no_parent_class_param)` — list objects; auto-tracks results for flush; `where` / `orderby` accept raw strings or expression objects from `cls.c`
+- `session.list(cls, where=None, *, orderby, offset, limit, tags, no_parent_class_param)` — list objects; auto-tracks results for flush. `where` is the second positional argument (not keyword-only). `where` / `orderby` accept raw strings or expression objects from `cls.c`. Returns `list[T]`.
+- `session.one(cls, where=None, *, tags, no_parent_class_param)` — like `list()` but asserts exactly one result; raises `ValueError` otherwise.
+- `session.one_or_none(cls, where=None, *, tags, no_parent_class_param)` — like `list()` but returns the single result or `None` if empty; raises `ValueError` if more than one.
 - `session.get(cls, pk)` — fetch by PK with identity-map cache; does NOT auto-track (call `session.add(obj)` to track for writes)
 - `session.add(obj)` — explicitly track an existing object for dirty-write on flush
 - `session.new(obj)` — register a new object for creation on flush
 - `session.create(cls, parent=None, **kwargs)` — construct `cls(**kwargs)`, register for POST, return it; optional `parent` injects the parent's PK into the correct child field automatically (see § `parent_fields`)
 - `session.delete(obj)` — DELETE immediately (removes from cache and tracked list)
-- `session.flush()` — write all pending creates/updates in tracked order
+- `session.flush()` — write all pending creates/updates in tracked order; returns `list[SolidServerModel]` of objects that were written. On failure, `session.last_flush` is updated before the exception propagates.
 - Context manager — `__exit__` flushes (clean exit only) then closes the HTTP client
 
-`BaseSession` holds the shared non-I/O state (`_tracked`, `_cache`, `add`, `new`). `Session` and `AsyncSession` both subclass it and add `_client` + all I/O methods.
+`BaseSession` holds the shared non-I/O state and logic: `_new`, `_cache`, `add`, `new`, `create`, `reset`, `_iter_flush_work`, `_apply_flush_item`, and the `_build_list_params` / `_build_count_params` / `_absorb_list_result` helpers. `Session` and `AsyncSession` both subclass it and add `_client` plus all I/O methods. The two `flush()` implementations differ by exactly one line (`raw = self._dispatch(...)` vs `raw = await self._dispatch(...)`) — all other flush logic lives in `_iter_flush_work` and `_apply_flush_item`.
 
 ```python
 # Typical sync usage

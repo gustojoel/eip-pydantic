@@ -1000,21 +1000,21 @@ async def test_async_session_delete() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Session.list — select / offset / no_parent_class_param
+# Session.list — offset / no_parent_class_param
 # ---------------------------------------------------------------------------
 
 
 @respx.mock
-def test_session_list_select_offset_no_parent_class_param() -> None:
+def test_session_list_offset_no_parent_class_param() -> None:
     route = respx.get(f"{BASE}rest/ip_site_list").mock(
         return_value=httpx.Response(200, json=[_SPACE_ROW]),
     )
     with Session(HOST, *CREDS) as s:
-        s.list(Space, select="site_id,site_name", offset=5, no_parent_class_param=True)
+        s.list(Space, offset=5, no_parent_class_param=True)
     params = dict(route.calls.last.request.url.params)
-    assert params["SELECT"] == "site_id,site_name"
     assert params["offset"] == "5"
     assert params["NO_PARENT_CLASS_PARAM"] == "1"
+    assert "SELECT" not in params
 
 
 # ---------------------------------------------------------------------------

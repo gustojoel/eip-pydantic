@@ -159,3 +159,69 @@ def test_as_dotted_ipv4_invalid_returns_none() -> None:
 
 def test_as_datetime_invalid_returns_none() -> None:
     assert SolidServerModel._as_datetime("not-a-timestamp") is None
+
+
+# ---------------------------------------------------------------------------
+# ClassParamDict field <-> Pydantic (de)serialisation
+# ---------------------------------------------------------------------------
+
+def test_model_dump_json_does_not_raise() -> None:
+    obj = _PrefixModel.model_validate({"class_params": {"a": "1"}})
+    obj.model_dump_json()
+
+
+def test_model_dump_python_mode_returns_class_param_dict_unchanged() -> None:
+    obj = _PrefixModel.model_validate({})
+    dumped = obj.model_dump()
+    assert dumped["class_params"] is obj.class_params
+
+
+def test_model_dump_json_round_trips_inheritance_propagation_and_sources() -> None:
+    obj = _PrefixModel.model_validate({
+        "class_params": ClassParamDict.from_blobs(
+            params_blob="a=1&b=2",
+            props_blob="a=set,restrict&b=inherited,propagate",
+            sources_blob="b=real_site,7",
+            api_prefix="prefix",
+        ),
+    })
+
+    restored = _PrefixModel.model_validate_json(obj.model_dump_json())
+
+    assert dict(restored.class_params.items()) == dict(obj.class_params.items())
+    assert restored.class_params.is_set("a")
+    assert restored.class_params.is_restrict("a")
+    assert restored.class_params.is_inherited("b")
+    assert restored.class_params.is_propagate("b")
+    assert restored.class_params.source("b") == obj.class_params.source("b")
+
+
+def test_model_dump_json_drops_pending_deletes() -> None:
+    """A flush is presumed to have already reconciled staged deletions, so the
+    restored object has no memory of 'a' being pending deletion — it's simply
+    absent, same as if it had never been staged."""
+    obj = _PrefixModel.model_validate({
+        "class_params": ClassParamDict.from_blobs(params_blob="a=1&b=2", props_blob=None, api_prefix="prefix"),
+    })
+    del obj.class_params["a"]
+
+    restored = _PrefixModel.model_validate_json(obj.model_dump_json())
+
+    assert restored.class_params.deleted == frozenset()
+    assert "a" not in restored.class_params
+    assert "b" in restored.class_params
+
+
+def test_model_validate_plain_dict_class_params_still_works() -> None:
+    obj = _PrefixModel.model_validate({"class_params": {"k": "v"}})
+    assert obj.class_params["k"] == "v"
+    assert obj.class_params.is_inherited_or_set("k")
+
+
+def test_model_validate_json_invalid_inheritance_mode_raises_validation_error() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="Invalid inheritance mode"):
+        _PrefixModel.model_validate_json(
+            '{"class_params": {"a": "1", "$propagation": {"a": "bogus,propagate"}}}',
+        )

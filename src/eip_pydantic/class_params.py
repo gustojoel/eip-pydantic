@@ -7,7 +7,17 @@ Wire format: three parallel URL-encoded blobs on each API object:
 """
 import urllib.parse
 from collections.abc import Callable, ItemsView, Iterator
+from typing import Any, cast
 
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import CoreSchema, core_schema
+
+
+
+VALID_INHERITANCE_MODES = frozenset({"set", "inherited", "inherited_or_set"})
+VALID_PROPAGATION_MODES = frozenset({"propagate", "restrict"})
+
+_RESERVED_KEYS = frozenset({"$propagation", "$source"})
 
 
 class ClassParamDict:
@@ -20,6 +30,34 @@ class ClassParamDict:
 
     Use ``from_blobs()`` to construct from wire data.  The ``empty()`` factory
     creates an instance with no parameters (used as the default for new objects).
+
+    **Pydantic integration / JSON round-tripping**: this type is not a
+    ``pydantic.BaseModel`` — it's a hand-rolled ``Mapping``-like container with
+    mutation-notification and per-instance ``frozen`` semantics that don't fit a
+    fixed-field schema.  Pydantic v2 validation/serialisation is wired up via
+    :meth:`__get_pydantic_core_schema__` instead:
+
+    - ``model_dump()`` (Python mode) returns the ``ClassParamDict`` instance
+      unchanged — no conversion happens, so re-``model_validate()``-ing it is a
+      lossless round-trip.
+    - ``model_dump_json()`` / ``model_dump(mode="json")`` serialise via
+      :meth:`to_full_dict`: parameter values sit at the top level exactly like a
+      plain ``{key: value}`` dict, with two reserved ``"$"``-prefixed keys added
+      alongside them only when there is something to say — ``"$propagation"``
+      (per-key inheritance/propagation mode) and ``"$source"`` (per-key
+      inheritance source). Parameter names must not themselves start with
+      ``"$"``. ``frozen`` is not serialised — like other read-only fields on
+      these models, the caller is expected to know which fields are frozen.
+      Pending ``delete()`` calls are also **not** serialised: a flush is
+      presumed to have already reconciled them, so a round-tripped object
+      simply has no memory of keys staged for deletion. See :meth:`to_full_dict`
+      / :meth:`from_full_dict`.
+    - A plain ``{key: value}`` dict with neither reserved key is also accepted
+      for validation, e.g. ``Session.create(cls, class_params={"k": "v"})``.
+      Every key defaults to inheritance ``"inherited_or_set"`` / propagation
+      ``"propagate"`` (see :meth:`from_dict`) — this path carries no per-key
+      inheritance metadata, unlike the full round-trip dict above (which
+      defaults an unlisted key to ``"set"`` / ``"propagate"`` instead).
     """
 
     _params: dict[str, str]
@@ -45,6 +83,66 @@ class ClassParamDict:
         self._api_prefix = api_prefix
         self._frozen = frozen
         self._on_mutate = None
+
+    # ---- Pydantic integration ---------------------------------------------
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler,  # noqa: ARG003
+    ) -> CoreSchema:
+        """Let Pydantic v2 validate and serialise this arbitrary type.
+
+        Validation accepts an existing ``ClassParamDict`` (passthrough, used on
+        ``model_dump()`` round-trips and internal construction), a full
+        round-trip dict as produced by :meth:`to_full_dict` (used when
+        re-validating ``model_dump_json()`` output), or a plain ``{key: value}``
+        dict (converted via :meth:`from_dict`). Serialisation to JSON mode emits
+        :meth:`to_full_dict`'s output; Python-mode ``model_dump()`` keeps
+        returning the ``ClassParamDict`` instance unchanged.
+        """
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls._serialize,
+                return_schema=core_schema.dict_schema(),
+                when_used="json",
+            ),
+        )
+
+    @classmethod
+    def _validate(cls, v: object) -> "ClassParamDict":
+        return cls.from_any(v)
+
+    @staticmethod
+    def _serialize(v: "ClassParamDict") -> dict[str, Any]:
+        return v.to_full_dict()
+
+    @classmethod
+    def from_any(cls, v: object, api_prefix: str = "") -> "ClassParamDict":
+        """Coerce a ``ClassParamDict``, full round-trip dict, or plain dict.
+
+        The single entry point used both by Pydantic field validation (via
+        :meth:`__get_pydantic_core_schema__`) and by
+        ``SolidServerModel._coerce_class_params`` for a user-supplied
+        ``class_params=`` value, so both call sites resolve the plain-dict vs.
+        full-round-trip-dict ambiguity identically: a dict containing either of
+        the reserved ``"$propagation"`` / ``"$source"`` keys is treated as a
+        full round-trip dict (see :meth:`from_full_dict`); otherwise it's a
+        plain ``{key: value}`` dict (see :meth:`from_dict`).
+
+        Raises:
+            TypeError: If *v* is not a ``ClassParamDict`` or ``dict``.
+            ValueError: If *v* is a full round-trip dict with an invalid
+                inheritance or propagation mode (see :meth:`from_full_dict`).
+        """
+        if isinstance(v, ClassParamDict):
+            return v
+        if isinstance(v, dict):
+            d = cast("dict[str, object]", v)
+            if _RESERVED_KEYS & d.keys():
+                return cls.from_full_dict(d, api_prefix=api_prefix)
+            return cls.from_dict(d, api_prefix=api_prefix)
+        raise TypeError(f"Cannot construct ClassParamDict from {type(v).__name__}")
 
     @classmethod
     def empty(cls) -> "ClassParamDict":
@@ -110,12 +208,108 @@ class ClassParamDict:
 
         return cls(params, props, sources, api_prefix=api_prefix, frozen=frozen)
 
+    # ---- Full round-trip (de)serialisation --------------------------------
+
+    def to_full_dict(self) -> dict[str, Any]:
+        """Serialise param values and metadata to a plain, JSON-safe dict.
+
+        This is the format used by ``model_dump_json()`` for fields typed
+        ``ClassParamDict`` — pass the result to :meth:`from_full_dict` (or just
+        re-run it through ``model_validate_json()``) to reconstruct an
+        equivalent instance.
+
+        Values sit at the top level exactly like a plain ``{key: value}``
+        dict. Two reserved keys are added alongside them, each omitted
+        entirely when there's nothing to say:
+
+        - ``"$propagation"`` — ``{key: "inheritance,propagation"}`` for every
+          key that has property metadata (the same encoding used by
+          :meth:`from_blobs`). Omitted if empty.
+        - ``"$source"`` — ``{key: "container_type,container_id"}`` for every
+          key with a recorded inheritance source. Omitted if empty.
+
+        ``frozen`` is not serialised — like other read-only fields on these
+        models, the caller is expected to know which fields are frozen; a
+        reconstructed instance is always mutable. Keys staged for deletion via
+        :meth:`delete` are also **not** included — a flush is presumed to have
+        already reconciled them with the server, so round-tripping does not
+        preserve pending deletions.
+        """
+        result: dict[str, Any] = dict(self._params)
+        if propagation := {
+            k: f"{inh},{prop}" for k, (inh, prop) in self._props.items() if k in self._params
+        }:
+            result["$propagation"] = propagation
+        if source := {
+            k: f"{ctype},{cid}" for k, (ctype, cid) in self._sources.items() if k in self._params
+        }:
+            result["$source"] = source
+        return result
+
+    @classmethod
+    def from_full_dict(cls, d: dict[str, Any], api_prefix: str = "") -> "ClassParamDict":
+        """Reconstruct a ``ClassParamDict`` from :meth:`to_full_dict`'s output.
+
+        Every top-level key other than ``"$propagation"`` and ``"$source"`` is
+        a parameter value. Both reserved keys may be omitted; a parameter key
+        omitted from ``"$propagation"`` entirely defaults to inheritance
+        ``"set"`` / propagation ``"propagate"`` (matching :meth:`from_blobs`'s
+        default for a key with no properties entry). The result is always
+        unfrozen, since ``to_full_dict()`` does not serialise ``frozen``.
+
+        Args:
+            d: A dict as produced by :meth:`to_full_dict`.
+            api_prefix: Wire field prefix, e.g. ``"subnet"`` or ``"site"``.
+
+        Raises:
+            TypeError: If ``"$propagation"`` or ``"$source"`` is present but
+                not a dict.
+            ValueError: If a ``"$propagation"`` entry names an inheritance mode
+                not in ``VALID_INHERITANCE_MODES`` or a propagation mode not in
+                ``VALID_PROPAGATION_MODES``.
+        """
+        params: dict[str, str] = {str(k): str(v) for k, v in d.items() if k not in _RESERVED_KEYS}
+
+        raw_propagation: object = d.get("$propagation") or {}
+        if not isinstance(raw_propagation, dict):
+            raise TypeError(f"'$propagation' must be a dict, got {type(raw_propagation).__name__}")
+        props: dict[str, tuple[str, str]] = {}
+        for k, v in cast("dict[str, object]", raw_propagation).items():
+            parts = str(v).split(",", 1)
+            inheritance = parts[0]
+            propagation = parts[1] if len(parts) > 1 else "propagate"
+            if inheritance not in VALID_INHERITANCE_MODES:
+                raise ValueError(
+                    f"Invalid inheritance mode {inheritance!r} for class parameter {k!r}; "
+                    f"must be one of {sorted(VALID_INHERITANCE_MODES)}",
+                )
+            if propagation not in VALID_PROPAGATION_MODES:
+                raise ValueError(
+                    f"Invalid propagation mode {propagation!r} for class parameter {k!r}; "
+                    f"must be one of {sorted(VALID_PROPAGATION_MODES)}",
+                )
+            props[str(k)] = (inheritance, propagation)
+        for k in params:
+            if k not in props:
+                props[k] = ("set", "propagate")
+
+        raw_source: object = d.get("$source") or {}
+        if not isinstance(raw_source, dict):
+            raise TypeError(f"'$source' must be a dict, got {type(raw_source).__name__}")
+        sources: dict[str, tuple[str, str]] = {}
+        for k, v in cast("dict[str, object]", raw_source).items():
+            parts = str(v).split(",", 1)
+            sources[str(k)] = (parts[0], parts[1] if len(parts) > 1 else "")
+
+        return cls(params, props, sources, api_prefix=api_prefix)
+
     # ---- Mapping interface -----------------------------------------------
 
     def __getitem__(self, k: str) -> str:
         return self._params[k]
 
     def get(self, k: str, default: str | None = None) -> str | None:
+        """Return the value for key *k*, or *default* if not present."""
         return self._params.get(k, default)
 
     def __setitem__(self, k: str, v: str) -> None:

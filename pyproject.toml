@@ -9,7 +9,7 @@ description = "A typed SDK for EfficientIP SolidServer"
 packages = [{ include = "eip_pydantic", from = "src" }]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11,<4"
 httpx = "^0.28"
 pydantic = "^2.7"
 

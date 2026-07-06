@@ -231,7 +231,7 @@ class SolidServerModel(BaseModel):
         return col == obj_id
 
     @classmethod
-    def column_expr_for(cls, name: str) -> ColumnExpr | None:
+    def column_expr_for(cls, name: str) -> ColumnExpr | None:  # noqa: ARG003
         """Return a custom ColumnExpr for ``name``, or ``None`` to use default dispatch.
 
         Override in concrete models to handle virtual columns that require special
@@ -285,8 +285,11 @@ class SolidServerModel(BaseModel):
         cases, in priority order:
 
         1. Already a ``ClassParamDict`` (e.g. from ``model_dump()`` round-trip) — left unchanged.
-        2. Plain dict (e.g. ``session.create(Vrf, class_params={"k": "v"})``) — converted
-           via :meth:`ClassParamDict.from_dict` so the user's values are preserved.
+        2. A dict — either a full round-trip dict (``model_dump(mode="json")`` output,
+           e.g. via ``Model.model_validate_json(model.model_dump_json())``) or a plain
+           ``{key: value}`` dict (e.g. ``session.create(Vrf, class_params={"k": "v"})``) —
+           dispatched via :meth:`ClassParamDict.from_any` so both shapes are handled
+           identically to Pydantic's own field validation.
         3. Anything else (``None``, a stringified blob, absent) — built from the model's
            wire blob keys (``{prefix}_class_parameters`` etc.) via
            :meth:`ClassParamDict.from_blobs`.
@@ -301,7 +304,7 @@ class SolidServerModel(BaseModel):
         if isinstance(existing, ClassParamDict):
             return
         if isinstance(existing, dict):
-            out["class_params"] = ClassParamDict.from_dict(existing, api_prefix=prefix)
+            out["class_params"] = ClassParamDict.from_any(existing, api_prefix=prefix) # type: ignore  # noqa: PGH003
         else:
             out["class_params"] = ClassParamDict.from_blobs(
                 cls._as_str(v.get(f"{prefix}_class_parameters")),

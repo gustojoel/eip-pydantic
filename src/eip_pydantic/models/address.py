@@ -1,4 +1,4 @@
-"""IpAddress model (``ip_address_list`` / ``ip_address_info``)."""
+"""IpAddress and FreeAddress models (``ip_address_list`` / ``ip_find_free_address``)."""
 from datetime import datetime
 from ipaddress import IPv4Address
 from types import MappingProxyType
@@ -7,7 +7,118 @@ from typing import Any, ClassVar, cast
 from pydantic import Field, model_validator
 
 from eip_pydantic.class_params import ClassParamDict
+from eip_pydantic.exceptions import InternalError
 from eip_pydantic.models.base import SolidServerConfig, SolidServerModel
+
+
+
+class FreeAddress(SolidServerModel):
+    """One candidate free IPv4 address returned by ``ip_find_free_address``.
+
+    Results are limited to 10 rows unless ``max_find`` is passed.
+    """
+
+    solid_config: ClassVar[SolidServerConfig] = SolidServerConfig(
+        paths=MappingProxyType({"find_free": "rpc/ip_find_free_address"}),
+    )
+
+    ip_addr: IPv4Address
+    site_id: int
+    site_name: str
+    subnet_id: int
+    subnet_name: str
+    pool_id: int | None = None
+    pool_name: str | None = None
+
+    @classmethod
+    def build_class_request(
+        cls,
+        operation: str,
+        **kwargs: Any,
+    ) -> tuple[str, str, dict[str, str]]:
+        """Build the request descriptor for ``ip_find_free_address``.
+
+        Args:
+            operation: Must be ``'find_free'``.
+            subnet: IPv4 network to search in — an integer ID or a
+                :class:`Subnet` instance.
+            pool: IPv4 pool to search in — an integer ID or a :class:`Pool`
+                instance.
+            parent_subnet: Parent IPv4 network to search in — an integer ID
+                or a :class:`Subnet` instance.
+            max_find: Maximum number of addresses to return (default 10).
+
+        Returns:
+            ``("OPTIONS", path, params)`` triple ready for :meth:`Session._dispatch`.
+
+        Raises:
+            InternalError: If ``operation`` is not ``'find_free'``.
+            ValueError: If none of ``subnet``, ``pool``, or ``parent_subnet`` is provided.
+        """
+        if operation != "find_free":
+            raise InternalError(
+                f"FreeAddress.build_class_request only supports 'find_free', got {operation!r}",
+            )
+        subnet = kwargs.get("subnet")
+        pool = kwargs.get("pool")
+        parent_subnet = kwargs.get("parent_subnet")
+        if subnet is None and pool is None and parent_subnet is None:
+            raise ValueError("find_free_address requires one of 'subnet', 'pool', or 'parent_subnet'")
+        params: dict[str, str] = {}
+        if subnet is not None:
+            subnet_id = subnet if isinstance(subnet, int) else subnet.id
+            if subnet_id is not None:
+                params["subnet_id"] = str(subnet_id)
+        if pool is not None:
+            pool_id = pool if isinstance(pool, int) else pool.id
+            if pool_id is not None:
+                params["pool_id"] = str(pool_id)
+        if parent_subnet is not None:
+            parent_subnet_id = parent_subnet if isinstance(parent_subnet, int) else parent_subnet.id
+            if parent_subnet_id is not None:
+                params["parent_subnet_id"] = str(parent_subnet_id)
+        if (v := kwargs.get("max_find")) is not None:
+            params["max_find"] = str(v)
+        return ("OPTIONS", cls.solid_config.paths["find_free"], params)
+
+    @classmethod
+    def parse_response(cls, operation: str, data: Any) -> "list[FreeAddress]":
+        """Parse the raw JSON rows from ``ip_find_free_address`` into model instances.
+
+        Args:
+            operation: Must be ``'find_free'``.
+            data: Raw list of dicts from the API response.
+
+        Returns:
+            List of :class:`FreeAddress` instances.
+
+        Raises:
+            InternalError: If ``operation`` is not ``'find_free'``.
+        """
+        if operation != "find_free":
+            raise InternalError(
+                f"FreeAddress.parse_response only supports 'find_free', got {operation!r}",
+            )
+        return [cls.model_validate(item) for item in data]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        v = cast(dict[str, Any], data)
+        out: dict[str, Any] = {}
+        for key, val in v.items():
+            match key:
+                case "ip_addr":
+                    out[key] = cls._as_hex_ipv4(val)
+                case "hostaddr":
+                    out[key] = cls._as_dotted_ipv4(val)
+                case "errno" | "site_id" | "subnet_id" | "pool_id":
+                    out[key] = cls._as_int(val)
+                case _:
+                    out[key] = cls._as_str(val) if key in cls.model_fields else val
+        return out
 
 
 

@@ -1,6 +1,6 @@
 """Public re-exports for all model classes."""
 from eip_pydantic.class_params import ClassParamDict
-from eip_pydantic.models.address import IpAddress
+from eip_pydantic.models.address import FreeAddress, IpAddress
 from eip_pydantic.models.base import RowEnabled, SolidServerModel
 from eip_pydantic.models.dhcp_failover import DhcpFailoverChannel
 from eip_pydantic.models.dhcp_range import DhcpRange
@@ -32,6 +32,7 @@ __all__ = [
     "DnsServer",
     "DnsView",
     "DnsZone",
+    "FreeAddress",
     "FreeSubnet",
     "IpAddress",
     "Pool",

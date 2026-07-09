@@ -11,7 +11,9 @@ import httpx
 
 from eip_pydantic.client import AsyncEipClient, EipClient
 from eip_pydantic.expressions import Condition, OrderByExpr, and_all
+from eip_pydantic.models.address import FreeAddress
 from eip_pydantic.models.base import SolidServerModel
+from eip_pydantic.models.pool import Pool
 from eip_pydantic.models.space import Space
 from eip_pydantic.models.subnet import FreeSubnet, Subnet
 
@@ -514,6 +516,40 @@ class Session(BaseSession):
         raw = self._dispatch(verb, path, params)
         return FreeSubnet.parse_response("find_free", raw)
 
+    def find_free_address(
+        self,
+        *,
+        subnet: int | Subnet | None = None,
+        pool: int | Pool | None = None,
+        parent_subnet: int | Subnet | None = None,
+        max_find: int | None = None,
+    ) -> builtins.list[FreeAddress]:
+        """Return candidate free IPv4 addresses via ``ip_find_free_address``.
+
+        Exactly one of ``subnet``, ``pool``, or ``parent_subnet`` must be supplied.
+
+        Args:
+            subnet: IPv4 network to search in — an integer ID or a
+                :class:`Subnet` instance.
+            pool: IPv4 pool to search in — an integer ID or a :class:`Pool`
+                instance.
+            parent_subnet: Parent IPv4 network to search in — an integer ID
+                or a :class:`Subnet` instance.
+            max_find: Maximum number of addresses to return (default 10).
+
+        Returns:
+            List of :class:`FreeAddress` rows, each describing one available address.
+
+        Raises:
+            ValueError: If none of ``subnet``, ``pool``, or ``parent_subnet`` is provided.
+        """
+        verb, path, params = FreeAddress.build_class_request(
+            "find_free",
+            subnet=subnet, pool=pool, parent_subnet=parent_subnet, max_find=max_find,
+        )
+        raw = self._dispatch(verb, path, params)
+        return FreeAddress.parse_response("find_free", raw)
+
     # ---- Write --------------------------------------------------------------
 
     def delete(self, obj: SolidServerModel) -> None:
@@ -813,6 +849,40 @@ class AsyncSession(BaseSession):
         )
         raw = await self._dispatch(verb, path, params)
         return FreeSubnet.parse_response("find_free", raw)
+
+    async def find_free_address(
+        self,
+        *,
+        subnet: int | Subnet | None = None,
+        pool: int | Pool | None = None,
+        parent_subnet: int | Subnet | None = None,
+        max_find: int | None = None,
+    ) -> builtins.list[FreeAddress]:
+        """Return candidate free IPv4 addresses via ``ip_find_free_address``.
+
+        Exactly one of ``subnet``, ``pool``, or ``parent_subnet`` must be supplied.
+
+        Args:
+            subnet: IPv4 network to search in — an integer ID or a
+                :class:`Subnet` instance.
+            pool: IPv4 pool to search in — an integer ID or a :class:`Pool`
+                instance.
+            parent_subnet: Parent IPv4 network to search in — an integer ID
+                or a :class:`Subnet` instance.
+            max_find: Maximum number of addresses to return (default 10).
+
+        Returns:
+            List of :class:`FreeAddress` rows, each describing one available address.
+
+        Raises:
+            ValueError: If none of ``subnet``, ``pool``, or ``parent_subnet`` is provided.
+        """
+        verb, path, params = FreeAddress.build_class_request(
+            "find_free",
+            subnet=subnet, pool=pool, parent_subnet=parent_subnet, max_find=max_find,
+        )
+        raw = await self._dispatch(verb, path, params)
+        return FreeAddress.parse_response("find_free", raw)
 
     # ---- Write --------------------------------------------------------------
 

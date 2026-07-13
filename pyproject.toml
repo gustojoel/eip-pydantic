@@ -5,7 +5,21 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "eip-pydantic"
 version = "0.0.0"
-description = "A typed SDK for EfficientIP SolidServer"
+description = "A typed Python SDK for the EfficientIP SolidServer REST API, built on httpx and Pydantic v2"
+authors = ["Anthony Uk <uk@anthonyuk.com>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/dataway/eip-pydantic"
+homepage = "https://github.com/dataway/eip-pydantic"
+keywords = ["efficientip", "solidserver", "ipam", "dns", "dhcp", "pydantic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+]
 packages = [{ include = "eip_pydantic", from = "src" }]
 
 [tool.poetry.dependencies]

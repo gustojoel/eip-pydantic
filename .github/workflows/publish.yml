@@ -1,0 +1,122 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  # Reuses .github/workflows/tests.yml (workflow_call) so a release can never
+  # skip the same checks a normal PR would have to pass.
+  tests:
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+
+  version:
+    needs: tests
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Derive and validate version from release tag
+        id: version
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG_NAME#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+|\.post[0-9]+|\.dev[0-9]+)?$ ]]; then
+            echo "::error::Release tag '$TAG_NAME' does not look like a PEP 440 version (derived '$version')" >&2
+            exit 1
+          fi
+          echo "Derived package version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Set package version from release tag
+        run: poetry version "${{ needs.version.outputs.version }}"
+
+      - name: Build sdist and wheel
+        run: poetry build
+
+      - name: Check distribution metadata
+        run: pipx run twine check --strict dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Publishes pre-releases (tags/releases flagged "pre-release" in GitHub) to
+  # TestPyPI instead of PyPI, so the release pipeline itself can be validated
+  # end to end before a real version number is ever burned on PyPI. Requires
+  # a trusted publisher configured on https://test.pypi.org for this repo,
+  # workflow (publish.yml), and environment (testpypi).
+  publish-testpypi:
+    if: github.event.release.prerelease
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/eip-pydantic/${{ needs.version.outputs.version }}/
+    permissions:
+      id-token: write # required for PyPI trusted publishing (OIDC) — no API token stored anywhere
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true
+
+  # Publishes full releases to PyPI proper via trusted publishing (OIDC) — no
+  # long-lived API token is stored as a repository secret. Requires a
+  # trusted publisher configured on https://pypi.org for this repo, workflow
+  # (publish.yml), and environment (pypi); see
+  # https://docs.pypi.org/trusted-publishers/
+  publish-pypi:
+    if: "!github.event.release.prerelease"
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/eip-pydantic/${{ needs.version.outputs.version }}/
+    permissions:
+      id-token: write # required for PyPI trusted publishing (OIDC) — no API token stored anywhere
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          # attestations: true is the default — gh-action-pypi-publish generates
+          # PEP 740 / Sigstore build provenance attestations automatically
+          # whenever id-token: write is granted, with no extra configuration.

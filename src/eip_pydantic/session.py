@@ -200,7 +200,6 @@ class BaseSession:
         model_cls: type[SolidServerModel],
         where: str | Condition | Iterable[Condition] | None,
         orderby: str | OrderByExpr | None,
-        select: str | None,
         offset: int | None,
         limit: int | None,
         tags: str | None,
@@ -226,8 +225,6 @@ class BaseSession:
             kwargs["where"] = str(effective_where)
         if orderby is not None:
             kwargs["orderby"] = str(orderby)
-        if select is not None:
-            kwargs["select"] = select
         if offset is not None:
             kwargs["offset"] = offset
         if limit is not None:
@@ -367,7 +364,7 @@ class Session(BaseSession):
             Validated model instances in the order returned by the API.
         """
         verb, path, params = self._build_list_params(
-            cls, where, orderby, None, offset, limit, tags, no_parent_class_param,
+            cls, where, orderby, offset, limit, tags, no_parent_class_param,
         )
         raw = self._dispatch(verb, path, params)
         return self._absorb_list_result(cls, cast(list[T], cls.parse_response("list", raw)))
@@ -706,7 +703,7 @@ class AsyncSession(BaseSession):
             Validated model instances in the order returned by the API.
         """
         verb, path, params = self._build_list_params(
-            cls, where, orderby, None, offset, limit, tags, no_parent_class_param,
+            cls, where, orderby, offset, limit, tags, no_parent_class_param,
         )
         raw = await self._dispatch(verb, path, params)
         return self._absorb_list_result(cls, cast(list[T], cls.parse_response("list", raw)))

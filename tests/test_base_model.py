@@ -68,6 +68,15 @@ def test_model_post_init_sets_missing_class_param_prefix() -> None:
     assert obj.class_params.api_prefix == "prefix"
 
 
+def test_coerce_class_params_noop_when_prefix_is_none() -> None:
+    """A model with no class_param_prefix (the base-class default) doesn't
+    support class parameters at all, so _coerce_class_params must leave
+    out["class_params"] untouched rather than inventing an empty one."""
+    out: dict[str, object] = {}
+    SolidServerModel._coerce_class_params(out, {})
+    assert "class_params" not in out
+
+
 # ---------------------------------------------------------------------------
 # build_class_request / build_request / parse_response / apply_response
 # ---------------------------------------------------------------------------
@@ -75,6 +84,11 @@ def test_model_post_init_sets_missing_class_param_prefix() -> None:
 def test_build_class_request_unknown_op_raises() -> None:
     with pytest.raises(ValueError, match="Unknown class operation"):
         SolidServerModel.build_class_request("frobnicate")
+
+
+def test_build_class_request_list_select_raises() -> None:
+    with pytest.raises(ValueError, match="'select' parameter is not supported"):
+        SolidServerModel.build_class_request("list", select="site_name")
 
 
 def test_build_request_info_no_id_raises() -> None:

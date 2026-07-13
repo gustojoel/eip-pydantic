@@ -40,6 +40,15 @@ def test_mapping_interface_basics() -> None:
     assert "ClassParamDict" in repr(cp)
 
 
+def test_get_returns_value_or_default() -> None:
+    cp = ClassParamDict.empty()
+    cp["k1"] = "v1"
+
+    assert cp.get("k1") == "v1"
+    assert cp.get("missing") is None
+    assert cp.get("missing", "fallback") == "fallback"
+
+
 def test_setitem_existing_key_preserves_propagation_and_updates_inheritance() -> None:
     cp = ClassParamDict.from_blobs("x=old", "x=inherited,restrict")
     cp["x"] = "new"

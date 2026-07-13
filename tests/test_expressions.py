@@ -329,6 +329,13 @@ def test_subnet_column_eq_slash16() -> None:
     assert str(cond) == "(start_ip_addr='0a000000') and (end_ip_addr='0a00ffff')"
 
 
+def test_subnet_column_eq_unparseable_falls_back_to_plain_equality() -> None:
+    """A value that isn't a valid IPv4Network falls back to a plain equality
+    condition on the declared field name, instead of the compound hex range."""
+    cond = Subnet.c.subnet == "not-a-network"
+    assert str(cond) == "subnet='not-a-network'"
+
+
 # ---------------------------------------------------------------------------
 # HexIpv4ColumnExpr — hex-coded IPv4 address columns
 # ---------------------------------------------------------------------------
@@ -370,6 +377,24 @@ def test_hex_ip_ge() -> None:
 def test_hex_ip_le() -> None:
     cond = Subnet.c.end_ip_addr <= "10.255.255.255"
     assert str(cond) == "end_ip_addr<='0affffff'"
+
+
+def test_hex_ip_lt() -> None:
+    cond = Subnet.c.start_ip_addr < "10.0.0.5"
+    assert str(cond) == "start_ip_addr<'0a000005'"
+
+
+def test_hex_ip_gt() -> None:
+    cond = Subnet.c.start_ip_addr > "10.0.0.5"
+    assert str(cond) == "start_ip_addr>'0a000005'"
+
+
+def test_hex_ip_unparseable_value_passes_through_as_is() -> None:
+    """_to_hex falls back to the raw string when it's neither 8-char hex nor a
+    parseable IPv4Address — e.g. a class-param-style free-text value compared
+    against a hex column by mistake."""
+    cond = Subnet.c.start_ip_addr == "not-an-ip"
+    assert str(cond) == "start_ip_addr='not-an-ip'"
 
 
 def test_hex_ip_in_() -> None:

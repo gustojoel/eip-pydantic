@@ -355,12 +355,14 @@ class SolidServerModel(BaseModel):
 
         Called by the Session for operations that do not require an existing
         object instance (``list``, ``info`` by PK).
+        The ``select`` parameter was removed because our model layer doesn't
+        support incomplete data and I don't think any use case would benefit from it.
 
         Args:
             operation: ``'list'`` or ``'info'``.
             **kwargs: Operation-specific parameters.  For ``'list'``:
-                ``where``, ``orderby``, ``select``, ``offset``, ``limit``,
-                ``tags``, ``no_parent_class_param``.  For ``'info'``: ``pk``.
+                ``where``, ``orderby``, ``offset``, ``limit``, ``tags``,
+                ``no_parent_class_param``.  For ``'info'``: ``pk``.
 
         Returns:
             A ``(http_verb, path, params)`` triple ready to pass to the
@@ -369,15 +371,18 @@ class SolidServerModel(BaseModel):
         Raises:
             TypeError: If the model has no path configured for the requested
                 ``operation``.
-            ValueError: If ``operation`` is not recognised.
+            ValueError: If ``operation`` is not recognised, or if ``'select'``
+                is passed for a ``'list'`` operation (see above).
         """
         paths = cls.solid_config.paths
         match operation:
             case "list":
+                if "select" in kwargs:
+                    raise ValueError("The 'select' parameter is not supported by the model layer")
                 params: dict[str, str] = {}
                 for kwarg, api_key in (
                     ("where", "WHERE"), ("orderby", "ORDERBY"),
-                    ("select", "SELECT"), ("tags", "TAGS"),
+                    ("tags", "TAGS"),
                 ):
                     if kwarg in kwargs:
                         params[api_key] = str(kwargs[kwarg])

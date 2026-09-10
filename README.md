@@ -119,6 +119,61 @@ pip install eip-pydantic
 
 Requires Python 3.11 or newer. The only runtime dependencies are `httpx` and `pydantic` (v2).
 
+## Authentication
+
+`Session`, `AsyncSession`, `EipClient`, and `AsyncEipClient` all support two mutually exclusive ways to authenticate — pass exactly one pair of keyword arguments; passing both, or neither, raises `ValueError`.
+
+### Username / password (HTTP Basic Auth)
+
+```python
+from eip_pydantic import Session
+
+with Session("solidserver.example.com", "admin", "secret") as session:
+    ...
+```
+
+### API token (recommended for modern SolidServer deployments)
+
+SolidServer's newer token-based scheme signs every request instead of sending a password on the wire. Pass `token_id` and `token_secret` as keyword arguments instead of `username`/`password`:
+
+```python
+from eip_pydantic import Session
+
+with Session("solidserver.example.com", token_id="<token-id>", token_secret="<token-secret>") as session:
+    ...
+```
+
+Internally this is handled by `eip_pydantic.client.ApiKeyAuth`, an `httpx.Auth` implementation that computes a fresh `X-SDS-TS` / `Authorization: SDS <token-id>:<signature>` header pair for every request (the signature is bound to the request's method, full URL, and timestamp, so it can't be precomputed once and reused).
+
+A typical way to keep the token out of source control is a `.env` file (gitignored) loaded with [`python-dotenv`](https://pypi.org/project/python-dotenv/):
+
+```
+# .env — never commit this file
+EIP_HOST=solidserver.example.com
+EIP_TOKEN_ID=your-token-id
+EIP_TOKEN_SECRET=your-token-secret
+```
+
+```python
+import os
+
+from dotenv import load_dotenv
+
+from eip_pydantic import Session
+from eip_pydantic.models import Space
+
+load_dotenv()
+
+with Session(
+    os.environ["EIP_HOST"],
+    token_id=os.environ["EIP_TOKEN_ID"],
+    token_secret=os.environ["EIP_TOKEN_SECRET"],
+) as session:
+    for space in session.list(Space, limit=10):
+        print(space.site_id, space.site_name)
+```
+
+Both `EipClient`/`AsyncEipClient` (the low-level transport) and `Session`/`AsyncSession` accept the same `token_id`/`token_secret` keywords.
 
 ## Core concepts
 

@@ -1,5 +1,8 @@
 """Sync and async EfficientIP SolidServer clients."""
 
+import hashlib
+import time
+from collections.abc import Generator
 from types import TracebackType
 from typing import Any, Self
 
@@ -10,6 +13,38 @@ from eip_pydantic.exceptions import ApiError, AuthenticationError, NotFoundError
 
 
 _DEFAULT_TIMEOUT = httpx.Timeout(30.0)
+
+
+class ApiKeyAuth(httpx.Auth):
+    """httpx auth flow for SolidServer's API token authentication scheme.
+
+    Computes a fresh ``X-SDS-TS`` / ``Authorization: SDS <id>:<sig>`` pair for
+    every request, since the signature is bound to the request's method, full
+    URL, and current epoch timestamp. See "Calling SOLIDserver Services" (API
+    token authentication) in the SolidServer REST API reference.
+
+    Attributes:
+        token_id: The API token's public identifier.
+        token_secret: The API token's secret, used to compute the signature.
+    """
+
+    def __init__(self, token_id: str, token_secret: str) -> None:
+        """Create an API key auth flow.
+
+        Args:
+            token_id: The API token's public identifier.
+            token_secret: The API token's secret.
+        """
+        self.token_id = token_id
+        self.token_secret = token_secret
+
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+        ts = str(int(time.time()))
+        string_to_sign = f"{self.token_secret}\n{ts}\n{request.method}\n{request.url}"
+        signature = hashlib.sha3_256(string_to_sign.encode()).hexdigest()
+        request.headers["X-SDS-TS"] = ts
+        request.headers["Authorization"] = f"SDS {self.token_id}:{signature}"
+        yield request
 
 
 class _BaseEipClient:
@@ -24,19 +59,40 @@ class _BaseEipClient:
             raise NotFoundError(response.status_code, message)
         raise ApiError(response.status_code, message)
 
+    @staticmethod
+    def _build_auth(
+        username: str | None,
+        password: str | None,
+        token_id: str | None,
+        token_secret: str | None,
+    ) -> httpx.Auth:
+        has_basic = username is not None and password is not None
+        has_token = token_id is not None and token_secret is not None
+        if has_basic and has_token:
+            raise ValueError(
+                "Specify either username/password or token_id/token_secret, not both",
+            )
+        if has_token:
+            return ApiKeyAuth(token_id, token_secret)  # type: ignore[arg-type]
+        if has_basic:
+            return httpx.BasicAuth(username, password)  # type: ignore[arg-type]
+        raise ValueError("Must specify either username/password or token_id/token_secret")
+
     @classmethod
     def _httpx_kwargs(
         cls,
         host: str,
-        username: str,
-        password: str,
+        username: str | None,
+        password: str | None,
         *,
+        token_id: str | None,
+        token_secret: str | None,
         timeout: httpx.Timeout,
         verify: bool | str,
     ) -> dict[str, Any]:
         return {
             "base_url": f"https://{host}/",
-            "auth": httpx.BasicAuth(username, password),
+            "auth": cls._build_auth(username, password, token_id, token_secret),
             "timeout": timeout,
             "verify": verify,
             "headers": {"Accept": "application/json"},
@@ -54,23 +110,40 @@ class EipClient(_BaseEipClient):
     def __init__(
         self,
         host: str,
-        username: str,
-        password: str,
+        username: str | None = None,
+        password: str | None = None,
         *,
+        token_id: str | None = None,
+        token_secret: str | None = None,
         timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
         verify: bool | str = True,
     ) -> None:
         """Create a synchronous SolidServer client.
 
+        Authenticate with either ``username``/``password`` (HTTP Basic Auth)
+        or ``token_id``/``token_secret`` (SolidServer API token auth) — exactly
+        one pair must be supplied.
+
         Args:
             host: SolidServer hostname or IP address (no scheme, no trailing slash).
             username: API username for HTTP Basic Auth.
             password: API password for HTTP Basic Auth.
+            token_id: API token's public identifier, for API token auth.
+            token_secret: API token's secret, for API token auth.
             timeout: httpx timeout configuration applied to every request.
             verify: TLS certificate verification.  Pass ``False`` to skip
                 verification or a path string to a custom CA bundle.
+
+        Raises:
+            ValueError: If neither or both of the two credential pairs are supplied.
         """
-        self._http = httpx.Client(**self._httpx_kwargs(host, username, password, timeout=timeout, verify=verify))
+        self._http = httpx.Client(
+            **self._httpx_kwargs(
+                host, username, password,
+                token_id=token_id, token_secret=token_secret,
+                timeout=timeout, verify=verify,
+            ),
+        )
 
     def __enter__(self) -> Self:
         return self
@@ -199,23 +272,40 @@ class AsyncEipClient(_BaseEipClient):
     def __init__(
         self,
         host: str,
-        username: str,
-        password: str,
+        username: str | None = None,
+        password: str | None = None,
         *,
+        token_id: str | None = None,
+        token_secret: str | None = None,
         timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
         verify: bool | str = True,
     ) -> None:
         """Create an asynchronous SolidServer client.
 
+        Authenticate with either ``username``/``password`` (HTTP Basic Auth)
+        or ``token_id``/``token_secret`` (SolidServer API token auth) — exactly
+        one pair must be supplied.
+
         Args:
             host: SolidServer hostname or IP address (no scheme, no trailing slash).
             username: API username for HTTP Basic Auth.
             password: API password for HTTP Basic Auth.
+            token_id: API token's public identifier, for API token auth.
+            token_secret: API token's secret, for API token auth.
             timeout: httpx timeout configuration applied to every request.
             verify: TLS certificate verification.  Pass ``False`` to skip
                 verification or a path string to a custom CA bundle.
+
+        Raises:
+            ValueError: If neither or both of the two credential pairs are supplied.
         """
-        self._http = httpx.AsyncClient(**self._httpx_kwargs(host, username, password, timeout=timeout, verify=verify))
+        self._http = httpx.AsyncClient(
+            **self._httpx_kwargs(
+                host, username, password,
+                token_id=token_id, token_secret=token_secret,
+                timeout=timeout, verify=verify,
+            ),
+        )
 
     async def __aenter__(self) -> Self:
         return self

@@ -29,6 +29,7 @@ Address-space layout (first /16 of TEST_IP_NETWORK, default 100.64.0.0/16):
 import os
 from collections.abc import AsyncIterator, Iterator
 from ipaddress import IPv4Address, IPv4Network
+from typing import TypeVar
 
 import pytest
 from dotenv import load_dotenv
@@ -45,33 +46,49 @@ load_dotenv()
 _HOST = os.getenv("EIP_HOST", "")
 _USERNAME = os.getenv("EIP_USERNAME", "")
 _PASSWORD = os.getenv("EIP_PASSWORD", "")
+_TOKEN_ID = os.getenv("EIP_TOKEN_ID", "")
+_TOKEN_SECRET = os.getenv("EIP_TOKEN_SECRET", "")
 _VERIFY = os.getenv("EIP_VERIFY", "true").lower() != "false"
 
-_CREDS_AVAILABLE = bool(_HOST and _USERNAME and _PASSWORD)
+# API token auth takes priority when both credential pairs are present in .env.
+_USE_TOKEN_AUTH = bool(_TOKEN_ID and _TOKEN_SECRET)
+_CREDS_AVAILABLE = bool(_HOST and (_USE_TOKEN_AUTH or (_USERNAME and _PASSWORD)))
 
 
 def _skip_if_no_creds() -> None:
     if not _CREDS_AVAILABLE:
-        pytest.skip("EIP_HOST / EIP_USERNAME / EIP_PASSWORD not set in .env")
+        pytest.skip(
+            "EIP_HOST and either EIP_TOKEN_ID/EIP_TOKEN_SECRET or "
+            "EIP_USERNAME/EIP_PASSWORD not set in .env",
+        )
+
+
+_ST = TypeVar("_ST", Session, AsyncSession)
+
+
+def _new_session(cls: type[_ST]) -> _ST:
+    if _USE_TOKEN_AUTH:
+        return cls(_HOST, token_id=_TOKEN_ID, token_secret=_TOKEN_SECRET, verify=_VERIFY)
+    return cls(_HOST, _USERNAME, _PASSWORD, verify=_VERIFY)
 
 
 def open_session() -> Session:
     """Open a non-managed Session.  Caller must call ``_client.close()``."""
     _skip_if_no_creds()
-    return Session(_HOST, _USERNAME, _PASSWORD, verify=_VERIFY)
+    return _new_session(Session)
 
 
 @pytest.fixture(scope="session")
 def session() -> Iterator[Session]:
     _skip_if_no_creds()
-    with Session(_HOST, _USERNAME, _PASSWORD, verify=_VERIFY) as s:
+    with _new_session(Session) as s:
         yield s
 
 
 @pytest.fixture
 async def async_session() -> AsyncIterator[AsyncSession]:
     _skip_if_no_creds()
-    async with AsyncSession(_HOST, _USERNAME, _PASSWORD, verify=_VERIFY) as s:
+    async with _new_session(AsyncSession) as s:
         yield s
 
 
@@ -83,7 +100,7 @@ def write_session() -> Iterator[Session]:
     so uncommitted state does not leak between tests.
     """
     _skip_if_no_creds()
-    s = Session(_HOST, _USERNAME, _PASSWORD, verify=_VERIFY)
+    s = _new_session(Session)
     try:
         yield s
     finally:

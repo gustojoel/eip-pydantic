@@ -407,10 +407,18 @@ The current `_httpx_kwargs` sets `base_url = f"https://{host}/"` (no `/rest/` pr
 
 Three options (all require HTTPS — http returns 302):
 
-1. **Basic auth** — username:password (what we use via `httpx.BasicAuth`)
-2. **Header-based** — `X-IPM-Username: <base64>` + `X-IPM-Password: <base64>`
-3. **API token** — `X-SDS-TS: <epoch>` + `Authorization: SDS <token-id>:<SHA3-256-signature>`
-   - Signature = SHA3-256 of `"<secret>\n<epoch>\n<METHOD>\n<full-url>"`)
+1. **Basic auth** — username:password. `Session(host, username, password)` → `httpx.BasicAuth` internally.
+2. **Header-based** — `X-IPM-Username: <base64>` + `X-IPM-Password: <base64>` (not implemented in this SDK)
+3. **API token** — `X-SDS-TS: <epoch-seconds>` + `Authorization: SDS <token-id>:<hex-sha3-256-signature>`.
+   `Session(host, token_id=..., token_secret=...)` → `ApiKeyAuth` (in `client.py`) internally.
+   - Signature = hex-encoded plain SHA3-256 digest (not HMAC) of `f"{token_secret}\n{ts}\n{method}\n{url}"`,
+     where `ts` is the current epoch seconds and `url` is the full request URL (including query string).
+     A fresh signature is computed per request since it's bound to the method/URL/timestamp.
+   - Source: `api_docs/ch02_calling_solidserver_services.md` and `api_docs/ch03_solidserver_key_services.md`
+     (Examples 3.3/3.4 — PHP and shell reference implementations).
+
+`EipClient`/`AsyncEipClient`/`Session`/`AsyncSession` all take `username`/`password` OR
+`token_id`/`token_secret` (keyword-only) — exactly one pair; passing both or neither raises `ValueError`.
 
 ### HTTP verb → service type mapping
 

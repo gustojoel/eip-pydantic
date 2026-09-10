@@ -307,24 +307,39 @@ class Session(BaseSession):
     def __init__(
         self,
         host: str,
-        username: str,
-        password: str,
+        username: str | None = None,
+        password: str | None = None,
         *,
+        token_id: str | None = None,
+        token_secret: str | None = None,
         timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
         verify: bool | str = True,
     ) -> None:
         """Create a synchronous session.
 
+        Authenticate with either ``username``/``password`` (HTTP Basic Auth)
+        or ``token_id``/``token_secret`` (SolidServer API token auth) — exactly
+        one pair must be supplied.
+
         Args:
             host: SolidServer hostname or IP address (no scheme).
             username: API username for HTTP Basic Auth.
             password: API password for HTTP Basic Auth.
+            token_id: API token's public identifier, for API token auth.
+            token_secret: API token's secret, for API token auth.
             timeout: httpx timeout applied to every request.
             verify: TLS certificate verification — ``False`` to skip, or a
                 path to a custom CA bundle.
+
+        Raises:
+            ValueError: If neither or both of the two credential pairs are supplied.
         """
         super().__init__()
-        self._client = EipClient(host, username, password, timeout=timeout, verify=verify)
+        self._client = EipClient(
+            host, username, password,
+            token_id=token_id, token_secret=token_secret,
+            timeout=timeout, verify=verify,
+        )
 
     # ---- Read ---------------------------------------------------------------
 
@@ -650,24 +665,39 @@ class AsyncSession(BaseSession):
     def __init__(
         self,
         host: str,
-        username: str,
-        password: str,
+        username: str | None = None,
+        password: str | None = None,
         *,
+        token_id: str | None = None,
+        token_secret: str | None = None,
         timeout: httpx.Timeout = _DEFAULT_TIMEOUT,
         verify: bool | str = True,
     ) -> None:
         """Create an asynchronous session.
 
+        Authenticate with either ``username``/``password`` (HTTP Basic Auth)
+        or ``token_id``/``token_secret`` (SolidServer API token auth) — exactly
+        one pair must be supplied.
+
         Args:
             host: SolidServer hostname or IP address (no scheme).
             username: API username for HTTP Basic Auth.
             password: API password for HTTP Basic Auth.
+            token_id: API token's public identifier, for API token auth.
+            token_secret: API token's secret, for API token auth.
             timeout: httpx timeout applied to every request.
             verify: TLS certificate verification — ``False`` to skip, or a
                 path to a custom CA bundle.
+
+        Raises:
+            ValueError: If neither or both of the two credential pairs are supplied.
         """
         super().__init__()
-        self._client = AsyncEipClient(host, username, password, timeout=timeout, verify=verify)
+        self._client = AsyncEipClient(
+            host, username, password,
+            token_id=token_id, token_secret=token_secret,
+            timeout=timeout, verify=verify,
+        )
 
     # ---- Read ---------------------------------------------------------------
 

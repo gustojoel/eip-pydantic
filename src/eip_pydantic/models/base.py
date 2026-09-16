@@ -596,6 +596,30 @@ class SolidServerModel(BaseModel):
             return None
 
     @staticmethod
+    def _as_hex_or_dotted_ipv4(v: object) -> IPv4Address | None:
+        """Hex-encoded *or* dotted-decimal string → IPv4Address.
+
+        Server responses always use wire-format hex ('0a541400') for these
+        columns, but a caller constructing a new object client-side (e.g. an
+        Ansible module passing a plain string param) has no reason to know
+        that — detect which format we were given the same way the
+        expression builder's ``HexIpv4ColumnExpr`` already does for ``WHERE``
+        clauses, so both work.
+        """
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
+            return None
+        if isinstance(v, IPv4Address):
+            return v
+        s = str(v)
+        if len(s) == 8 and all(c in "0123456789abcdefABCDEF" for c in s):
+            # 8 hex digits always fall within IPv4Address's 32-bit range.
+            return IPv4Address(int(s, 16))
+        try:
+            return IPv4Address(s)
+        except ValueError:
+            return None
+
+    @staticmethod
     def _as_datetime(v: object) -> datetime | None:
         """Unix epoch string → UTC datetime."""
         if v is None or v == "" or v == "#":  # noqa: PLR1714

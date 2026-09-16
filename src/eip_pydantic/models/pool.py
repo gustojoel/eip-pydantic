@@ -208,7 +208,7 @@ class Pool(SolidServerModel):
                     "start_ip_addr" | "end_ip_addr" |
                     "subnet_start_ip_addr" | "subnet_end_ip_addr"
                 ):
-                    out[key] = cls._as_hex_ipv4(val)
+                    out[key] = cls._as_hex_or_dotted_ipv4(val)
                 case (
                     "errno" | "pool_id" | "pool_size" |
                     "parent_subnet_size" | "subnet_size"

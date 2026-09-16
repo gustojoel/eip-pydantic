@@ -526,6 +526,17 @@ def test_subnet_coerce_non_dict_passthrough() -> None:
     assert Subnet._coerce(sentinel) is sentinel
 
 
+def test_subnet_accepts_a_plain_cidr_string() -> None:
+    """A caller constructing client-side (e.g. an Ansible module) passes a plain string, not IPv4Network."""
+    sn = Subnet(subnet_name="test-net", subnet="10.0.0.0/24", subnet_level=0)
+    assert sn.subnet == IPv4Network("10.0.0.0/24")
+
+
+def test_subnet_ignores_an_invalid_cidr_string() -> None:
+    sn = Subnet(subnet_name="test-net", subnet="not-a-cidr", subnet_level=0)
+    assert sn.subnet is None
+
+
 # ---------------------------------------------------------------------------
 # _coerce consistency assertions — server data that should never occur
 # ---------------------------------------------------------------------------

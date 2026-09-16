@@ -359,6 +359,19 @@ def test_pool_build_request_create_injects_addresses() -> None:
     assert params["subnet_id"] == "7"
 
 
+def test_pool_accepts_plain_dotted_strings_for_addresses() -> None:
+    """A caller constructing client-side (e.g. an Ansible module) passes plain strings, not hex wire format."""
+    p = Pool(subnet_id=7, start_ip_addr="10.0.1.10", end_ip_addr="10.0.1.100", pool_name="dhcp-range")
+    assert p.start_ip_addr == IPv4Address("10.0.1.10")
+    assert p.end_ip_addr == IPv4Address("10.0.1.100")
+
+
+def test_pool_still_accepts_hex_wire_format_for_addresses() -> None:
+    p = Pool.model_validate(_LIST_ROW)
+    assert p.start_ip_addr == IPv4Address("192.0.2.10")
+    assert p.end_ip_addr == IPv4Address("192.0.2.239")
+
+
 def test_pool_build_request_create_includes_dirty_fields() -> None:
     p = Pool.model_validate(_LIST_ROW)
     p.pool_name = "new-pool"

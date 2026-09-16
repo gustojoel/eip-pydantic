@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ipaddress import IPv4Address
+
 import pytest
 from pydantic import Field
 
@@ -169,6 +171,29 @@ def test_as_hex_ipv4_invalid_returns_none() -> None:
 
 def test_as_dotted_ipv4_invalid_returns_none() -> None:
     assert SolidServerModel._as_dotted_ipv4("999.999.999.999") is None
+
+
+def test_as_hex_or_dotted_ipv4_none_and_sentinels_return_none() -> None:
+    assert SolidServerModel._as_hex_or_dotted_ipv4(None) is None
+    assert SolidServerModel._as_hex_or_dotted_ipv4("") is None
+    assert SolidServerModel._as_hex_or_dotted_ipv4("#") is None
+
+
+def test_as_hex_or_dotted_ipv4_passes_through_ipv4address() -> None:
+    addr = IPv4Address("10.0.0.1")
+    assert SolidServerModel._as_hex_or_dotted_ipv4(addr) is addr
+
+
+def test_as_hex_or_dotted_ipv4_detects_hex() -> None:
+    assert SolidServerModel._as_hex_or_dotted_ipv4("0a541400") == IPv4Address("10.84.20.0")
+
+
+def test_as_hex_or_dotted_ipv4_detects_dotted() -> None:
+    assert SolidServerModel._as_hex_or_dotted_ipv4("10.84.20.0") == IPv4Address("10.84.20.0")
+
+
+def test_as_hex_or_dotted_ipv4_invalid_returns_none() -> None:
+    assert SolidServerModel._as_hex_or_dotted_ipv4("not-an-address") is None
 
 
 def test_as_datetime_invalid_returns_none() -> None:

@@ -1,8 +1,11 @@
 """Subnet and FreeSubnet models (``ip_block_subnet_list`` / ``ip_find_free_subnet``)."""
+import contextlib
 from datetime import datetime
 from ipaddress import IPv4Address, IPv4Network
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+
+
 
 if TYPE_CHECKING:
     from eip_pydantic.expressions import ColumnExpr
@@ -413,10 +416,16 @@ class Subnet(SolidServerModel):
                 ):
                     pass
                 # Already-built IPv4Network (e.g. from model_dump() or validate_assignment
-                # re-running _coerce) — preserve it; wire-data build below overrides if available
+                # re-running _coerce) — preserve it; wire-data build below overrides if
+                # available. A plain CIDR string is also accepted here (not just from the
+                # wire) — a caller constructing a new Subnet client-side (e.g. an Ansible
+                # module passing a plain string param) has no reason to pre-parse it.
                 case "subnet":
                     if isinstance(val, IPv4Network):
                         out[key] = val
+                    elif isinstance(val, str) and val:
+                        with contextlib.suppress(ValueError):
+                            out[key] = IPv4Network(val, strict=False)
                 case "parent_start_ip_addr" | "parent_end_ip_addr":
                     out[key] = cls._as_hex_ipv4(val)
                 case (

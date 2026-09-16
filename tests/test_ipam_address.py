@@ -504,6 +504,15 @@ def test_address_build_request_create_injects_site_id() -> None:
     assert params["site_id"] == "2"
 
 
+def test_address_build_request_create_sets_add_flag_new_only() -> None:
+    """Without an explicit add_flag, the server defaults to new_edit, which can match/edit
+    an existing row instead of creating -- new_only makes create() unambiguous.
+    """
+    a = IpAddress.model_validate(_LIST_ROW)
+    _, _, params = a.build_request("create")
+    assert params["add_flag"] == "new_only"
+
+
 def test_address_build_request_create_injects_subnet_id_when_present() -> None:
     a = IpAddress.model_validate(_LIST_ROW)
     _, _, params = a.build_request("create")

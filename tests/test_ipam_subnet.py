@@ -515,6 +515,15 @@ def test_subnet_list_sends_limit_and_orderby() -> None:
     assert params["ORDERBY"] == "start_ip_addr ASC"
 
 
+def test_subnet_build_request_create_sets_add_flag_new_only() -> None:
+    """Without an explicit add_flag, the server defaults to new_edit, which can match/edit
+    an existing row instead of creating -- new_only makes create() unambiguous.
+    """
+    sn = Subnet(subnet_name="test-net", subnet=IPv4Network("10.0.0.0/24"), site_id=1)
+    _, _, params = sn.build_request("create")
+    assert params["add_flag"] == "new_only"
+
+
 def test_subnet_build_request_create_missing_site_id_raises() -> None:
     sn = Subnet(subnet_name="test-net", subnet=IPv4Network("10.0.0.0/24"))
     with pytest.raises(ValueError, match="site_id"):

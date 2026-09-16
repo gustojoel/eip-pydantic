@@ -359,6 +359,15 @@ def test_pool_build_request_create_injects_addresses() -> None:
     assert params["subnet_id"] == "7"
 
 
+def test_pool_build_request_create_sets_add_flag_new_only() -> None:
+    """Without an explicit add_flag, the server defaults to new_edit, which can match/edit
+    an existing row instead of creating -- new_only makes create() unambiguous.
+    """
+    p = Pool.model_validate(_LIST_ROW)
+    _, _, params = p.build_request("create")
+    assert params["add_flag"] == "new_only"
+
+
 def test_pool_accepts_plain_dotted_strings_for_addresses() -> None:
     """A caller constructing client-side (e.g. an Ansible module) passes plain strings, not hex wire format."""
     p = Pool(subnet_id=7, start_ip_addr="10.0.1.10", end_ip_addr="10.0.1.100", pool_name="dhcp-range")

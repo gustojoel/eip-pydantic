@@ -382,6 +382,7 @@ class Subnet(SolidServerModel):
             params["site_name"] = self.site_name
         if self.parent_subnet_id is not None:
             params["parent_subnet_id"] = str(self.parent_subnet_id)
+        params["add_flag"] = "new_only"
         return ("POST", type(self).solid_config.paths["add"], params)
 
 

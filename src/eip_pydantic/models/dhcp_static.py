@@ -4,7 +4,7 @@ from ipaddress import IPv4Address
 from types import MappingProxyType
 from typing import Any, ClassVar, cast
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from eip_pydantic.class_params import ClassParamDict
 from eip_pydantic.models.base import RowEnabled, SolidServerConfig, SolidServerModel
@@ -146,8 +146,6 @@ class DhcpStatic(SolidServerModel):
                     out[key] = cls._as_dotted_ipv4(val)
                 case "dhcphost_ip_addr" | "ip_addr":
                     out[key] = cls._as_hex_ipv4(val)
-                case "dhcphost_mac_addr":
-                    out[key] = cls._as_dhcp_mac_addr(val)
                 case _:
                     if isinstance(val, ClassParamDict):
                         out[key] = val
@@ -159,3 +157,19 @@ class DhcpStatic(SolidServerModel):
         cls._coerce_class_params(out, v)
 
         return out
+
+    @field_validator("dhcphost_mac_addr", mode="before")
+    @classmethod
+    def _normalize_mac_addr(cls, v: object) -> str | None:
+        """Field-level (not just `_coerce()`'s model-level) MAC normalization.
+
+        `_coerce()` is a `model_validator(mode="before")` — it only runs on
+        full model construction (`DhcpStatic(...)`/`model_validate(...)`),
+        never on a later `existing.dhcphost_mac_addr = "..."` assignment,
+        even with `validate_assignment=True` (confirmed live: a real
+        reconcile-update path set an unprefixed MAC straight through,
+        bypassing the normalization entirely). A `@field_validator`
+        re-runs on both construction *and* assignment, so this is the only
+        place this normalization can live for it to actually always apply.
+        """
+        return cls._as_dhcp_mac_addr(v)

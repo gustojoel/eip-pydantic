@@ -91,6 +91,16 @@ def test_dhcp_static_leaves_an_already_7_section_mac_unchanged() -> None:
     assert st.dhcphost_mac_addr == "01:de:ad:be:ef:00:00"
 
 
+def test_dhcp_static_normalizes_a_bare_mac_on_assignment_too() -> None:
+    """Regression: `_coerce()` alone (a model-level 'before' validator) never re-runs on plain attribute assignment --
+    a real reconcile-update path (`existing.dhcphost_mac_addr = value`) sent an unprefixed MAC straight through and
+    the server rejected it. A `@field_validator` is required for this to apply on both construction and assignment.
+    """
+    st = DhcpStatic(dhcphost_mac_addr="01:aa:bb:cc:dd:ee:ff")
+    st.dhcphost_mac_addr = "de:ad:be:ef:00:00"
+    assert st.dhcphost_mac_addr == "01:de:ad:be:ef:00:00"
+
+
 def test_dhcp_static_mac_addr_null_sentinel_becomes_none() -> None:
     st = DhcpStatic.model_validate({**_LIST_ROW, "dhcphost_mac_addr": "#"})
     assert st.dhcphost_mac_addr is None

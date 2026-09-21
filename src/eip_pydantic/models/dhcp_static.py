@@ -29,6 +29,7 @@ class DhcpStatic(SolidServerModel):
         tags_prefix="dhcphost",
         create_fields=frozenset({
             "dhcp_id",
+            "dhcp_name",
             "dhcpscope_id",
             "dhcphost_addr",
             "dhcphost_mac_addr",
@@ -145,6 +146,8 @@ class DhcpStatic(SolidServerModel):
                     out[key] = cls._as_dotted_ipv4(val)
                 case "dhcphost_ip_addr" | "ip_addr":
                     out[key] = cls._as_hex_ipv4(val)
+                case "dhcphost_mac_addr":
+                    out[key] = cls._as_dhcp_mac_addr(val)
                 case _:
                     if isinstance(val, ClassParamDict):
                         out[key] = val

@@ -27,6 +27,7 @@ class DhcpScope(SolidServerModel):
         tags_prefix="dhcpscope",
         create_fields=frozenset({
             "dhcp_id",
+            "dhcp_name",
             "dhcpscope_net_addr",
             "dhcpscope_net_mask",
             "dhcpscope_name",

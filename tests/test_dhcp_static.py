@@ -80,6 +80,28 @@ def test_dhcp_static_coerce_fields() -> None:
     assert st.errno == 0
 
 
+def test_dhcp_static_normalizes_a_bare_6_octet_mac_to_ethernet() -> None:
+    """A plain 6-section MAC (what every other MAC field in this SDK/the real world uses) means Ethernet."""
+    st = DhcpStatic(dhcphost_mac_addr="de:ad:be:ef:00:00")
+    assert st.dhcphost_mac_addr == "01:de:ad:be:ef:00:00"
+
+
+def test_dhcp_static_leaves_an_already_7_section_mac_unchanged() -> None:
+    st = DhcpStatic(dhcphost_mac_addr="01:de:ad:be:ef:00:00")
+    assert st.dhcphost_mac_addr == "01:de:ad:be:ef:00:00"
+
+
+def test_dhcp_static_mac_addr_null_sentinel_becomes_none() -> None:
+    st = DhcpStatic.model_validate({**_LIST_ROW, "dhcphost_mac_addr": "#"})
+    assert st.dhcphost_mac_addr is None
+
+
+def test_dhcp_static_leaves_a_non_numeric_hardware_type_prefix_unchanged() -> None:
+    """Regression: an earlier, looser 'exactly 5 colons' heuristic mangled this pre-existing fixture value."""
+    st = DhcpStatic.model_validate(_LIST_ROW)
+    assert st.dhcphost_mac_addr == "ethernet aa:bb:cc:dd:ee:ff"
+
+
 def test_dhcp_static_write_params_name() -> None:
     st = DhcpStatic.model_validate(_LIST_ROW)
     st.dhcphost_name = "printer-renamed"

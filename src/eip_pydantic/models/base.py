@@ -1,4 +1,5 @@
 """Base model, dirty-tracking machinery, and shared write-layer helpers."""
+import re
 import urllib.parse
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ from eip_pydantic.expressions import ColumnCollection, ColumnExpr, Condition
 
 _EMPTY_PATHS: MappingProxyType[str, str] = MappingProxyType({})
 _MISSING = object()
+_BARE_MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
 
 
 class SolidServerConfig(NamedTuple):
@@ -529,6 +531,29 @@ class SolidServerModel(BaseModel):
         if v is None or v == "" or v == "#":  # noqa: PLR1714
             return None
         return str(v)
+
+    @staticmethod
+    def _as_dhcp_mac_addr(v: object) -> str | None:
+        """Normalize a MAC address for DHCP static-host fields (e.g. ``dhcphost_mac_addr``).
+
+        SolidServer's DHCP services want the ARP/DHCP hardware-type octet
+        (RFC 826/2132 -- ``01`` for Ethernet) prepended as a leading 7th
+        section: ``01:aa:bb:cc:dd:ee:ff``, not the plain 6-section
+        ``aa:bb:cc:dd:ee:ff`` every other MAC-address field in this SDK
+        (and the real world) uses. A caller supplying the ordinary 6-section
+        form almost always means Ethernet, so default it to ``01:`` rather
+        than surfacing this wire-format quirk. Only a *strict* bare 6-octet
+        hex MAC is rewritten -- anything else (an already-7-section value, a
+        non-numeric hardware-type prefix some deployments return on read,
+        or any other value shape) passes through unchanged, so this never
+        mangles a real server response on the way back in.
+        """
+        if v is None or v == "" or v == "#":  # noqa: PLR1714
+            return None
+        s = str(v)
+        if _BARE_MAC_RE.match(s):
+            return f"01:{s}"
+        return s
 
     @staticmethod
     def _as_int(v: object) -> int | None:

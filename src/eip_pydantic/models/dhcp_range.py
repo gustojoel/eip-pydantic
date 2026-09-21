@@ -25,6 +25,7 @@ class DhcpRange(SolidServerModel):
         create_fields=frozenset({
             "dhcpscope_id",
             "dhcp_id",
+            "dhcp_name",
             "dhcprange_start_addr",
             "dhcprange_end_addr",
             "dhcprange_name",
